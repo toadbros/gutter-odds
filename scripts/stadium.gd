@@ -88,8 +88,9 @@ func _environment() -> void:
 
 func _ground() -> void:
 	_box(Vector3(120, 0.25, 90), GutterLooks.mat(Color("4f8a38"), 0.95), Vector3(0, -0.12, 0))
-	var packed := _cyl(Vector3(0, 0.01, 0), 22.0, 0.08, GutterLooks.mat(Color("6b9a42"), 0.92), 32)
-	packed.use_collision = false
+	# Thin disc, not CSG. Godot 4.7 Manifold CSG explodes r=22 / h=0.08 into a default 2m can.
+	var packed := _cyl(Vector3(0, 0.04, 0), 22.0, 0.08, GutterLooks.mat(Color("6b9a42"), 0.92), 32, false)
+	packed.name = "PackedDirt"
 
 
 func _track() -> void:
@@ -120,10 +121,14 @@ func _track() -> void:
 
 
 func _infield() -> void:
-	var cap := _cyl(Vector3(0, 0.06, 0), 8.6, 0.16, GutterLooks.mat(Color("5a9a3e"), 0.9), 28)
-	cap.use_collision = true
-	_cyl(Vector3(0, 0.18, 0), 7.6, 0.08, GutterLooks.mat(Color("6b9a42"), 0.88), 28)
-	_label("THE OVAL", Vector3(0, 0.4, 0), 64, Color("1a3a18"))
+	# Circle must sit inside the inner rail (rz - half width = 7.9). Old r=8.6 spilled onto the dirt.
+	var cap_r := Game.TRACK_RZ - Game.TRACK_WIDTH * 0.5 - 0.55
+	var surface := Game.TRACK_SURFACE_Y
+	var cap := _cyl(Vector3(0, surface - 0.05, 0), cap_r, 0.12, GutterLooks.mat(Color("5a9a3e"), 0.9), 28, true)
+	cap.name = "InfieldCap"
+	var grass := _cyl(Vector3(0, surface + 0.01, 0), maxf(cap_r - 1.0, 1.0), 0.05, GutterLooks.mat(Color("6b9a42"), 0.88), 28, false)
+	grass.name = "InfieldGrass"
+	_label("THE OVAL", Vector3(0, surface + 0.16, 0), 64, Color("1a3a18"))
 	_condition_sign = _label("FAIR DIRT", Vector3(0, 2.72, 0), 56, Color("f0e6d0"))
 	_condition_sign.name = "ConditionSign"
 	var board := Label3D.new()
@@ -193,8 +198,8 @@ func _bookie() -> void:
 func _stands() -> void:
 	_build_stand_bank(16.2, 1.0)
 	_build_stand_bank(-16.2, -1.0)
-	_cyl(Vector3(-10.0, 0.7, 17.6), 0.08, 1.4, GutterLooks.mat(Color("f4f0e6"), 0.55), 8)
-	_cyl(Vector3(-10.0, 1.45, 17.6), 0.22, 0.22, GutterLooks.mat(Color("c42828"), 0.45), 10)
+	_cyl(Vector3(-10.0, 0.7, 17.6), 0.08, 1.4, GutterLooks.mat(Color("f4f0e6"), 0.55), 8, true)
+	_cyl(Vector3(-10.0, 1.45, 17.6), 0.22, 0.22, GutterLooks.mat(Color("c42828"), 0.45), 10, false)
 	_label("POST TIME", Vector3(-10.0, 1.95, 17.6), 28, Color("1a3a18"))
 	_interact("bell", Vector3(-10.0, 0.4, 17.2))
 
@@ -386,10 +391,8 @@ func _random_yard_point() -> Vector3:
 
 
 func _feed_pan(at: Vector3) -> void:
-	var pan := _cyl(at + Vector3(0, 0.03, 0), 0.28, 0.06, GutterLooks.mat(Color("8a8e86"), 0.45, 0.25), 10)
-	pan.use_collision = false
-	var corn := _cyl(at + Vector3(0, 0.06, 0), 0.18, 0.03, GutterLooks.mat(Color("e8c03a"), 0.7), 8)
-	corn.use_collision = false
+	var pan := _cyl(at + Vector3(0, 0.03, 0), 0.28, 0.06, GutterLooks.mat(Color("8a8e86"), 0.45, 0.25), 10, false)
+	var corn := _cyl(at + Vector3(0, 0.06, 0), 0.18, 0.03, GutterLooks.mat(Color("e8c03a"), 0.7), 8, false)
 	var mark := Marker3D.new()
 	mark.position = at
 	mark.add_to_group("coop_feed")
@@ -570,56 +573,43 @@ func _paint_condition_sign(condition: int) -> void:
 func _spawn_slick(parent: Node3D, at: Vector3, color: Color, radius: float = 1.15) -> void:
 	if parent == null:
 		return
-	var slick := CSGCylinder3D.new()
-	slick.radius = radius
-	slick.height = 0.07
-	slick.sides = 12
-	slick.position = Vector3(at.x, 0.27, at.z)
-	slick.material = GutterLooks.mat(color, 0.08, 0.92, Color("6a5a28"), 1.4)
-	slick.use_collision = false
-	parent.add_child(slick)
-	var smear := CSGBox3D.new()
-	smear.size = Vector3(radius * 2.2, 0.04, radius * 0.7)
-	smear.position = Vector3(at.x, 0.268, at.z)
+	var y := Game.TRACK_SURFACE_Y + 0.025
+	var slick := _fx_disc(parent, Vector3(at.x, y, at.z), radius, 0.06, GutterLooks.mat(color, 0.08, 0.92, Color("6a5a28"), 1.4), 12)
+	slick.name = "OilSlick"
+	var smear := MeshInstance3D.new()
+	smear.mesh = GutterLooks.box(Vector3(radius * 2.2, 0.03, radius * 0.7))
+	smear.material_override = GutterLooks.mat(color.lightened(0.08), 0.16, 0.7, color.lightened(0.15), 0.4)
+	smear.position = Vector3(at.x, y - 0.005, at.z)
 	smear.rotation.y = atan2(at.x, at.z)
-	smear.material = GutterLooks.mat(color.lightened(0.08), 0.16, 0.7, color.lightened(0.15), 0.4)
-	smear.use_collision = false
+	smear.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(smear)
-	var rim := CSGCylinder3D.new()
-	rim.radius = radius + 0.22
-	rim.height = 0.03
-	rim.sides = 14
-	rim.position = Vector3(at.x, 0.275, at.z)
-	rim.material = GutterLooks.mat(Color("e8c03a"), 0.35, 0.15, Color("f0d060"), 1.6)
-	rim.use_collision = false
-	parent.add_child(rim)
+	var rim := _fx_disc(parent, Vector3(at.x, y + 0.008, at.z), radius + 0.22, 0.03, GutterLooks.mat(Color("e8c03a"), 0.35, 0.15, Color("f0d060"), 1.6), 14)
+	rim.name = "OilRim"
 
 
 func _spawn_kernels(parent: Node3D, at: Vector3, count: int, size: float = 0.05) -> void:
 	if parent == null:
 		return
 	for i in count:
-		var kernel := CSGBox3D.new()
-		kernel.size = Vector3(size, size * 0.55, size * 0.72)
-		kernel.position = at + Vector3(randf_range(-0.85, 0.85), 0.04, randf_range(-0.85, 0.85))
-		kernel.position.y = 0.28
+		var kernel := MeshInstance3D.new()
+		kernel.mesh = GutterLooks.box(Vector3(size, size * 0.55, size * 0.72))
+		kernel.material_override = GutterLooks.mat(Color("e8c03a"), 0.4, 0.0, Color("f0d060"), 1.1)
+		kernel.position = at + Vector3(randf_range(-0.85, 0.85), 0.0, randf_range(-0.85, 0.85))
+		kernel.position.y = Game.TRACK_SURFACE_Y + 0.03
 		kernel.rotation.y = randf() * TAU
-		kernel.material = GutterLooks.mat(Color("e8c03a"), 0.4, 0.0, Color("f0d060"), 1.1)
-		kernel.use_collision = false
+		kernel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(kernel)
 
 
 func _spawn_dust(parent: Node3D, at: Vector3, color: Color) -> void:
 	if parent == null:
 		return
-	var puff := CSGCylinder3D.new()
-	puff.radius = 1.35
-	puff.height = 0.9
-	puff.sides = 8
-	puff.position = Vector3(at.x, 0.7, at.z)
-	puff.material = GutterLooks.mat(color.lightened(0.08), 0.95)
-	puff.use_collision = false
-	parent.add_child(puff)
+	# Haze pancake on the dirt — the old 0.9m CSG can read as a giant drum on the oval.
+	var mat := GutterLooks.mat(color.lightened(0.08), 0.95)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(color.r, color.g, color.b, 0.42)
+	var puff := _fx_disc(parent, Vector3(at.x, Game.TRACK_SURFACE_Y + 0.08, at.z), 1.15, 0.12, mat, 8)
+	puff.name = "DustHaze"
 
 
 func _spawn_event_light(at: Vector3, color: Color, energy: float, radius: float) -> void:
@@ -669,7 +659,7 @@ func _tick_corn_rain(delta: float) -> void:
 		node.position.y -= float(node.get_meta("fall")) * delta
 		var spin: Vector3 = node.get_meta("spin")
 		node.rotation += spin * delta
-		if node.position.y < 0.28:
+		if node.position.y < Game.TRACK_SURFACE_Y + 0.04:
 			node.position.y = randf_range(5.5, 9.2)
 			node.position.x = _live_at.x + randf_range(-2.6, 2.6)
 			node.position.z = _live_at.z + randf_range(-2.6, 2.6)
@@ -692,14 +682,15 @@ func _spawn_hawk(at: Vector3) -> Node3D:
 
 
 func _spawn_hawk_shadow(at: Vector3) -> Node3D:
-	var shadow := CSGCylinder3D.new()
-	shadow.radius = 1.8
-	shadow.height = 0.04
-	shadow.sides = 10
-	shadow.position = Vector3(at.x, 0.27, at.z)
-	shadow.material = GutterLooks.mat(Color(0.04, 0.03, 0.02, 0.7), 0.95)
-	shadow.use_collision = false
-	_live_fx.add_child(shadow)
+	var shadow := _fx_disc(
+		_live_fx,
+		Vector3(at.x, Game.TRACK_SURFACE_Y + 0.02, at.z),
+		1.8,
+		0.04,
+		GutterLooks.mat(Color(0.04, 0.03, 0.02, 0.7), 0.95),
+		10
+	)
+	shadow.name = "HawkShadow"
 	return shadow
 
 
@@ -715,7 +706,7 @@ func _tick_hawk() -> void:
 	_hawk.rotation.z = -sweep * 0.12
 	_hawk.rotation.x = 0.55 if dive < 1.0 and _live_t < 1.2 else -0.15
 	if _hawk_shadow:
-		_hawk_shadow.position = Vector3(_hawk.position.x, 0.27, _hawk.position.z)
+		_hawk_shadow.position = Vector3(_hawk.position.x, Game.TRACK_SURFACE_Y + 0.02, _hawk.position.z)
 		var wide := 2.6 if y < 2.2 else 1.6
 		_hawk_shadow.scale = Vector3(wide, 1.0, wide)
 
@@ -753,14 +744,8 @@ func _tick_dog(_delta: float) -> void:
 
 
 func _spawn_gun_puff(at: Vector3) -> void:
-	var puff := CSGCylinder3D.new()
-	puff.radius = 0.55
-	puff.height = 1.1
-	puff.sides = 8
-	puff.position = at
-	puff.material = GutterLooks.mat(Color(0.85, 0.85, 0.8, 0.55), 0.95)
-	puff.use_collision = false
-	_live_fx.add_child(puff)
+	var puff := _fx_disc(_live_fx, at, 0.55, 1.1, GutterLooks.mat(Color(0.85, 0.85, 0.8, 0.55), 0.95), 8)
+	puff.name = "GunPuff"
 	_spawn_event_light(at, Color("f0ead8"), 5.5, 9.0)
 
 
@@ -832,8 +817,8 @@ func _flags() -> void:
 
 
 func _props() -> void:
-	_cyl(Vector3(-18.5, 0.4, 12.0), 0.42, 0.8, GutterLooks.mat(Color("d4b85a"), 0.9), 12)
-	_cyl(Vector3(-17.6, 0.32, 12.6), 0.38, 0.64, GutterLooks.mat(Color("c4a050"), 0.9), 12)
+	_cyl(Vector3(-18.5, 0.4, 12.0), 0.42, 0.8, GutterLooks.mat(Color("d4b85a"), 0.9), 12, true)
+	_cyl(Vector3(-17.6, 0.32, 12.6), 0.38, 0.64, GutterLooks.mat(Color("c4a050"), 0.9), 12, true)
 	_box(Vector3(1.6, 0.55, 0.7), GutterLooks.mat(Color("8a8e86"), 0.45, 0.35), Vector3(-19.5, 0.32, -12.5))
 	_box(Vector3(1.4, 0.12, 0.55), GutterLooks.mat(Color("6a9ad0"), 0.3, 0.1), Vector3(-19.5, 0.62, -12.5))
 	_box(Vector3(2.6, 0.9, 0.16), GutterLooks.mat(Color("f4f0e6"), 0.6), Vector3(20.8, 0.5, 0))
@@ -896,13 +881,15 @@ func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> v
 func _white_fence(rx: float, rz: float) -> void:
 	var white := GutterLooks.mat(Color("f4f0e6"), 0.62)
 	var segments := 48
+	var post_h := 0.7
+	var rail_y := Game.TRACK_SURFACE_Y + 0.38
 	for i in segments:
 		var t0 := float(i) / float(segments)
 		var t1 := float(i + 1) / float(segments)
-		var p0 := GutterLooks.oval_point(t0, rx, rz, 0.55)
-		var p1 := GutterLooks.oval_point(t1, rx, rz, 0.55)
-		var post := _cyl(GutterLooks.oval_point(t0, rx, rz, 0.42), 0.045, 0.7, white, 6)
-		post.use_collision = false
+		var p0 := GutterLooks.oval_point(t0, rx, rz, rail_y)
+		var p1 := GutterLooks.oval_point(t1, rx, rz, rail_y)
+		var post := _cyl(GutterLooks.oval_point(t0, rx, rz, Game.TRACK_SURFACE_Y + post_h * 0.5), 0.045, post_h, white, 6, false)
+		post.name = "RailPost"
 		var delta := p1 - p0
 		var mid := (p0 + p1) * 0.5
 		var board := CSGBox3D.new()
@@ -925,8 +912,8 @@ func _pennant(at: Vector3, color: Color) -> void:
 		outward = Vector3.RIGHT
 	else:
 		outward = outward.normalized()
-	var pole := _cyl(at + Vector3(0, 1.15, 0), 0.03, 2.3, GutterLooks.mat(Color("f4f0e6"), 0.6), 6)
-	pole.use_collision = false
+	var pole := _cyl(at + Vector3(0, 1.15, 0), 0.03, 2.3, GutterLooks.mat(Color("f4f0e6"), 0.6), 6, false)
+	pole.name = "FlagPole"
 	var flag := _box(Vector3(0.58, 0.34, 0.04), GutterLooks.mat(color, 0.72), at + outward * 0.32 + Vector3(0, 2.05, 0))
 	flag.use_collision = false
 
@@ -941,16 +928,83 @@ func _box(size: Vector3, material: Material, pos: Vector3) -> CSGBox3D:
 	return b
 
 
-func _cyl(pos: Vector3, radius: float, height: float, material: Material, sides: int = 12) -> CSGCylinder3D:
-	var c := CSGCylinder3D.new()
-	c.radius = radius
-	c.height = height
-	c.sides = sides
-	c.position = pos
-	c.material = material
-	c.use_collision = true
-	add_child(c)
-	return c
+func _fx_disc(parent: Node3D, at: Vector3, radius: float, height: float, material: Material, sides: int = 12) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = GutterLooks.cyl(radius, height, sides)
+	mi.material_override = material
+	mi.position = at
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	return mi
+
+
+func _cyl(pos: Vector3, radius: float, height: float, material: Material, sides: int = 12, collide: bool = true) -> MeshInstance3D:
+	# CylinderMesh, not CSG. Thin/huge CSGCylinder3D hits Godot 4.7 Manifold and can
+	# come back as the default r=0.5 / h=2.0 can — that's the giant-on-the-oval bug.
+	var mi := GutterLooks.mesh(self, GutterLooks.cyl(radius, height, sides), material, pos)
+	if collide:
+		var body := StaticBody3D.new()
+		body.position = pos
+		body.collision_layer = 1
+		body.collision_mask = 0
+		var cs := CollisionShape3D.new()
+		var shape := CylinderShape3D.new()
+		shape.radius = radius
+		shape.height = height
+		cs.shape = shape
+		body.add_child(cs)
+		add_child(body)
+	return mi
+
+
+func list_oval_cylinders() -> PackedStringArray:
+	var lines: PackedStringArray = []
+	_collect_cylinders(self, lines, false)
+	return lines
+
+
+func audit_oval_cylinders() -> PackedStringArray:
+	var bad: PackedStringArray = []
+	_collect_cylinders(self, bad, true)
+	return bad
+
+
+func _collect_cylinders(node: Node, out: PackedStringArray, offenders_only: bool) -> void:
+	if node is CSGCylinder3D:
+		var csg := node as CSGCylinder3D
+		# Leftover CSG on the oval is the bug — always report it.
+		out.append("%s csg r=%.3f h=%.3f at=%s" % [csg.name, csg.radius, csg.height, csg.global_position])
+	elif node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var mesh := mi.mesh
+		if mesh is CylinderMesh:
+			var cyl := mesh as CylinderMesh
+			var sc := mi.global_transform.basis.get_scale()
+			var radius := maxf(cyl.top_radius, cyl.bottom_radius) * maxf(absf(sc.x), absf(sc.z))
+			var height := cyl.height * absf(sc.y)
+			var line := "%s mesh r=%.3f h=%.3f at=%s" % [mi.name, radius, height, mi.global_position]
+			if not offenders_only or _cylinder_pollutes_oval(mi.global_position, radius, height):
+				out.append(line)
+	for child in node.get_children():
+		_collect_cylinders(child, out, offenders_only)
+
+
+func _cylinder_pollutes_oval(pos: Vector3, radius: float, height: float) -> bool:
+	# Any leftover CSG cylinder is a Manifold risk. Fat + tall on the racing ribbon
+	# is the playtest "giant cans on the oval" look.
+	if radius >= 0.4 and height >= 0.45 and _on_oval_ribbon(pos):
+		return true
+	return false
+
+
+func _on_oval_ribbon(pos: Vector3) -> bool:
+	var rx := Game.TRACK_RX
+	var rz := Game.TRACK_RZ
+	if rx <= 0.001 or rz <= 0.001:
+		return false
+	var e := (pos.x * pos.x) / (rx * rx) + (pos.z * pos.z) / (rz * rz)
+	var band := Game.TRACK_WIDTH / minf(rx, rz)
+	return e >= 1.0 - band and e <= 1.0 + band
 
 
 func _label(text: String, pos: Vector3, size: int, color: Color) -> Label3D:
