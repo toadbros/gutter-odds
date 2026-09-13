@@ -67,6 +67,10 @@ var _breed_hen: String = ""
 var _breed_rooster: String = ""
 var _shed_line: Label
 var _market_hint: Label
+var _window_clock: Label
+var _lock_btn: Button
+var _results_hint: Label
+var _next_card_btn: Button
 
 
 func _ready() -> void:
@@ -114,6 +118,7 @@ func _process(delta: float) -> void:
 		_go_linger -= delta
 		if _go_linger <= 0.0:
 			_fade_go()
+	_refresh_loop_clocks()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -137,6 +142,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			close_panels()
 			return
 		if _results.visible:
+			return
+		if Game.phase == Game.Phase.COUNTDOWN or Game.phase == Game.Phase.RACE:
+			Game.toast.emit("They're running. You can stare, you can't pause.")
 			return
 		toggle_pause()
 
@@ -271,6 +279,9 @@ func open_results(payload: Dictionary) -> void:
 	if _market_ui:
 		_market_ui.visible = false
 	_countdown.text = ""
+	if _next_card_btn:
+		_next_card_btn.modulate = Color("e8d5a0")
+	_refresh_loop_clocks()
 	Game.set_ui_open(true)
 
 
@@ -305,6 +316,13 @@ func _on_phase(phase: Game.Phase) -> void:
 	_help.visible = not Game.is_sitting()
 	if phase != Game.Phase.RESULTS and _results:
 		_results.visible = false
+	if phase != Game.Phase.OPEN:
+		_bookie.visible = false
+		_inspect.visible = false
+		if _coop_ui:
+			_coop_ui.visible = false
+		if _market_ui:
+			_market_ui.visible = false
 	if phase == Game.Phase.MENU:
 		close_panels()
 		_show_menu_home()
@@ -320,7 +338,7 @@ func _on_phase(phase: Game.Phase) -> void:
 			_help.text = ""
 		Game.Phase.OPEN:
 			_phase.text = "%s  ·  %s" % [Game.race_name().to_upper(), RaceChaos.condition_name(Game.card_condition()).to_upper()]
-			_help.text = "WASD move  ·  E use  ·  B bookie  ·  K coop  ·  M market  ·  R bell"
+			_help.text = "WASD move  ·  E use  ·  B bookie  ·  K coop  ·  M market  ·  R lock the window"
 			_clear_count()
 		Game.Phase.COUNTDOWN:
 			_phase.text = "THEY'RE LINING UP  ·  %s" % RaceChaos.condition_name(Game.card_condition()).to_upper()
@@ -332,10 +350,11 @@ func _on_phase(phase: Game.Phase) -> void:
 			set_camera_mode(true)
 		Game.Phase.RESULTS:
 			_phase.text = "PHOTO FINISH"
-			_help.text = ""
+			_help.text = "DEAL THE NEXT CARD  ·  or it deals itself"
 			if _callout:
 				_callout.modulate.a = 0.0
 				_callout_time = 0.0
+	_refresh_loop_clocks()
 	_refresh_meet()
 
 
@@ -482,6 +501,16 @@ func _build() -> void:
 
 	_phase = _label(root, "BETTING OPEN", 22, Vector2(32, 24), BRASS)
 	_meet = _label(root, "", 14, Vector2(32, 50), MUTED)
+	_window_clock = _label(root, "", 34, Vector2(0, 18), BRASS)
+	_window_clock.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_window_clock.offset_left = 280
+	_window_clock.offset_right = -280
+	_window_clock.offset_top = 16
+	_window_clock.offset_bottom = 58
+	_window_clock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_window_clock.add_theme_color_override("font_outline_color", Color(0.06, 0.03, 0.02, 0.92))
+	_window_clock.add_theme_constant_override("outline_size", 8)
+	_window_clock.visible = false
 	_caps = _label(root, "100  caps", 22, Vector2(0, 24), INK)
 	_caps.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	_caps.offset_left = -280
@@ -490,12 +519,19 @@ func _build() -> void:
 	_caps.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_bet_slip = _label(root, "No slip", 16, Vector2(32, 72), MUTED)
 	_ticket = _build_ticket(root)
+	_lock_btn = _btn(root, "LOCK THE WINDOW", Vector2(0, 0), Vector2(280, 42), func() -> void: Game.ring_the_bell())
+	_lock_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_lock_btn.offset_left = -360
+	_lock_btn.offset_right = -24
+	_lock_btn.offset_top = 176
+	_lock_btn.offset_bottom = 220
+	_lock_btn.visible = false
 	_net = _label(root, "", 13, Vector2(0, 52), MUTED)
 	_net.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	_net.offset_left = -360
 	_net.offset_right = -36
-	_net.offset_top = 170
-	_net.offset_bottom = 190
+	_net.offset_top = 228
+	_net.offset_bottom = 248
 	_net.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 
 	_toast = _label(root, "", 20, Vector2(0, 90), INK)
@@ -995,7 +1031,7 @@ func _build_inspect(root: Control) -> Control:
 
 
 func _build_results(root: Control) -> Control:
-	var panel := _panel(root, Vector2(500, 520))
+	var panel := _panel(root, Vector2(520, 560))
 	panel.visible = false
 	var title := _label(panel, "THE CARD IS SETTLED", 22, Vector2(24, 16), BRASS)
 	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -1007,13 +1043,20 @@ func _build_results(root: Control) -> Control:
 	_results_body = RichTextLabel.new()
 	_results_body.bbcode_enabled = true
 	_results_body.position = Vector2(28, 56)
-	_results_body.size = Vector2(444, 360)
+	_results_body.size = Vector2(464, 320)
 	_results_body.add_theme_color_override("default_color", INK)
 	panel.add_child(_results_body)
-	_btn(panel, "Next race", Vector2(28, 432), Vector2(444, 48), func() -> void:
+	_next_card_btn = _btn(panel, "DEAL THE NEXT CARD", Vector2(28, 392), Vector2(464, 58), func() -> void:
 		_results.visible = false
 		Game.request_next_race()
 	)
+	_next_card_btn.custom_minimum_size = Vector2(464, 58)
+	_next_card_btn.add_theme_font_size_override("font_size", 20)
+	_next_card_btn.modulate = Color("e8d5a0")
+	_results_hint = _label(panel, "or it deals itself in 7", 15, Vector2(28, 458), MUTED)
+	_results_hint.size = Vector2(464, 36)
+	_results_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_results_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return panel
 
 
@@ -1223,6 +1266,31 @@ func _refresh_meet() -> void:
 		_phase.text = "%s  ·  %s" % [Game.race_name().to_upper(), RaceChaos.condition_name(Game.card_condition()).to_upper()]
 	elif Game.phase == Game.Phase.RACE:
 		_phase.text = "LIVE · %s  ·  %s" % [Game.race_name(), RaceChaos.condition_name(Game.card_condition()).to_upper()]
+	_refresh_loop_clocks()
+
+
+func _refresh_loop_clocks() -> void:
+	if _window_clock:
+		if Game.phase == Game.Phase.OPEN:
+			var secs := Game.open_secs_left()
+			_window_clock.visible = true
+			_window_clock.text = "WINDOW  %d:%02d" % [int(secs / 60), secs % 60]
+			_window_clock.add_theme_color_override("font_color", Color("e8c03a") if secs <= 5 else BRASS)
+		else:
+			_window_clock.visible = false
+			_window_clock.text = ""
+	if _lock_btn:
+		_lock_btn.visible = Game.phase == Game.Phase.OPEN
+		if _lock_btn.visible:
+			_lock_btn.text = "LOCK THE WINDOW" if not NetPlay.is_client() else "YELL FOR THE BELL"
+	if _results_hint and _results and _results.visible:
+		var left := Game.results_secs_left()
+		if NetPlay.is_client():
+			_results_hint.text = "Smash DEAL THE NEXT CARD  ·  or wait on the host."
+		elif left > 0:
+			_results_hint.text = "or it deals itself in %d" % left
+		else:
+			_results_hint.text = "Dealing the next card..."
 
 
 func _fill_coop() -> void:

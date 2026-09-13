@@ -188,7 +188,7 @@ func request_next_race() -> void:
 	if is_client():
 		rpc_id(1, "rpc_next_race")
 	else:
-		Game.new_round()
+		Game.request_next_race()
 
 
 func submit_entry(bird: Dictionary) -> void:
@@ -285,7 +285,7 @@ func rpc_ring() -> void:
 func rpc_next_race() -> void:
 	if not multiplayer.is_server():
 		return
-	Game.new_round()
+	Game.request_next_race()
 
 
 @rpc("any_peer", "call_remote")
