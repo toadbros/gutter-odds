@@ -73,6 +73,8 @@ var _window_clock: Label
 var _lock_btn: Button
 var _results_hint: Label
 var _next_card_btn: Button
+var _field_card: Control
+var _field_list: VBoxContainer
 
 
 func _ready() -> void:
@@ -82,7 +84,7 @@ func _ready() -> void:
 	_build()
 	Game.phase_changed.connect(_on_phase)
 	Game.money_changed.connect(_on_money)
-	Game.bet_changed.connect(_refresh_slip)
+	Game.bet_changed.connect(_on_bet_changed)
 	Game.toast.connect(show_toast)
 	Game.callout.connect(show_callout)
 	Game.event_callout.connect(show_event_callout)
@@ -251,6 +253,7 @@ func open_bookie() -> void:
 	if _market_ui:
 		_market_ui.visible = false
 	Game.set_ui_open(true)
+	_refresh_field_card()
 
 
 func open_inspect(index: int) -> void:
@@ -278,6 +281,7 @@ func open_inspect(index: int) -> void:
 	_inspect.visible = true
 	_bookie.visible = false
 	Game.set_ui_open(true)
+	_refresh_field_card()
 
 
 func open_results(payload: Dictionary) -> void:
@@ -333,6 +337,7 @@ func close_panels() -> void:
 		_coop_ui.visible = false
 	if _market_ui:
 		_market_ui.visible = false
+	_refresh_field_card()
 	if not _results.visible and not _paused:
 		Game.set_ui_open(false)
 
@@ -353,6 +358,7 @@ func _on_phase(phase: Game.Phase) -> void:
 	if _caps:
 		_caps.visible = not Game.is_sitting()
 	_standings.visible = phase == Game.Phase.RACE
+	_refresh_field_card()
 	_cam_mode.visible = phase == Game.Phase.RACE or phase == Game.Phase.COUNTDOWN
 	_help.visible = not Game.is_sitting()
 	if phase != Game.Phase.RESULTS and _results:
@@ -432,6 +438,13 @@ func _on_countdown(seconds: int) -> void:
 	_punch_count(1.32)
 
 
+func _on_bet_changed() -> void:
+	_refresh_slip()
+	_refresh_field_card()
+	if _bookie and _bookie.visible:
+		_fill_bookie()
+
+
 func _refresh_slip() -> void:
 	if _ticket_label == null:
 		return
@@ -472,8 +485,14 @@ func _fill_bookie() -> void:
 	for i in manager.field.size():
 		var snail: Snail = manager.field[i]
 		var row := Button.new()
-		row.text = "  #%d   %s     %s    %s" % [i + 1, snail.display_name, snail.odds_text(), ChickenStock.trait_summary(snail)]
-		row.custom_minimum_size = Vector2(460, 52)
+		row.text = "  #%d  %s    %s    %s\n  %s" % [
+			i + 1,
+			snail.display_name,
+			snail.odds_text(),
+			snail.archetype_name(),
+			snail.archetype_line(),
+		]
+		row.custom_minimum_size = Vector2(500, 62)
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		_style_button(row)
 		var idx: int = i
@@ -488,6 +507,60 @@ func _fill_bookie() -> void:
 	_highlight_bookie()
 	_refresh_confirm()
 	_highlight_stakes()
+
+
+func _refresh_field_card() -> void:
+	if _field_card == null or _field_list == null:
+		return
+	var overlay_up := (_bookie and _bookie.visible) or _inspect.visible or (_coop_ui and _coop_ui.visible) or (_market_ui and _market_ui.visible) or _results.visible
+	var show := Game.phase == Game.Phase.OPEN and not overlay_up
+	_field_card.visible = show
+	for child in _field_list.get_children():
+		child.queue_free()
+	if not show:
+		return
+	var manager := _manager()
+	if manager == null:
+		return
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		var row := Button.new()
+		row.text = "#%d  %s    %s\n%s" % [
+			i + 1,
+			snail.display_name,
+			snail.archetype_name(),
+			snail.archetype_line(),
+		]
+		row.custom_minimum_size = Vector2(360, 56)
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_style_button(row)
+		row.add_theme_font_size_override("font_size", 15)
+		var idx: int = i
+		row.pressed.connect(func() -> void:
+			_selected_snail = idx
+			open_bookie()
+		)
+		_field_list.add_child(row)
+
+
+func bet_card_rows() -> PackedStringArray:
+	var rows: PackedStringArray = []
+	var manager := _manager()
+	if manager == null:
+		return rows
+	for snail in manager.field:
+		rows.append(snail.bet_card_text())
+	return rows
+
+
+func field_card_count() -> int:
+	if _field_card == null or _field_list == null or not _field_card.visible:
+		return 0
+	var n := 0
+	for child in _field_list.get_children():
+		if child is Button and not child.is_queued_for_deletion():
+			n += 1
+	return n
 
 
 func _highlight_bookie() -> void:
@@ -657,6 +730,7 @@ func _build() -> void:
 	_standings.position = Vector2(32, 164)
 	_standings.visible = false
 	root.add_child(_standings)
+	_field_card = _build_field_card(root)
 
 	_binoculars = ColorRect.new()
 	_binoculars.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1008,6 +1082,37 @@ func _build_ticket(root: Control) -> Panel:
 	return panel
 
 
+func _build_field_card(root: Control) -> Control:
+	var panel := Panel.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.05, 0.04, 0.88)
+	style.border_color = BRASS
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+	panel.position = Vector2(24, 128)
+	panel.size = Vector2(392, 430)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.visible = false
+	var title := _label(panel, "THE FIELD", 16, Vector2(14, 8), BRASS)
+	title.size = Vector2(360, 24)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(10, 34)
+	scroll.size = Vector2(372, 386)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
+	_field_list = VBoxContainer.new()
+	_field_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_field_list.add_theme_constant_override("separation", 4)
+	scroll.add_child(_field_list)
+	root.add_child(panel)
+	return panel
+
+
 func _build_bookie(root: Control) -> Control:
 	var overlay := ColorRect.new()
 	overlay.color = Color(0.35, 0.52, 0.68, 0.4)
@@ -1015,7 +1120,7 @@ func _build_bookie(root: Control) -> Control:
 	overlay.visible = false
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	root.add_child(overlay)
-	var panel := _panel(overlay, Vector2(540, 640))
+	var panel := _panel(overlay, Vector2(580, 800))
 	var title := _label(panel, "THE BOOKIE", 26, Vector2(24, 18), BRASS)
 	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	title.offset_left = 24
@@ -1023,7 +1128,7 @@ func _build_bookie(root: Control) -> Control:
 	title.offset_top = 16
 	title.offset_bottom = 52
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var hint := _label(panel, "Pick a chicken, pick a stake, stuff the slip.", 14, Vector2(24, 52), MUTED)
+	var hint := _label(panel, "Name, type, one line. Pick a bird before the window slams.", 14, Vector2(24, 52), MUTED)
 	hint.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	hint.offset_left = 24
 	hint.offset_right = -24
@@ -1032,16 +1137,16 @@ func _build_bookie(root: Control) -> Control:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var scroll := ScrollContainer.new()
 	scroll.position = Vector2(28, 80)
-	scroll.size = Vector2(484, 270)
+	scroll.size = Vector2(524, 430)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
 	_bookie_list = VBoxContainer.new()
 	_bookie_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bookie_list.add_theme_constant_override("separation", 6)
 	scroll.add_child(_bookie_list)
-	_stake_label = _label(panel, "Stake: 10 caps", 16, Vector2(28, 360), INK)
+	_stake_label = _label(panel, "Stake: 10 caps", 16, Vector2(28, 520), INK)
 	var stake_row := HBoxContainer.new()
-	stake_row.position = Vector2(28, 390)
+	stake_row.position = Vector2(28, 548)
 	stake_row.add_theme_constant_override("separation", 8)
 	panel.add_child(stake_row)
 	_stake_buttons.clear()
@@ -1062,11 +1167,11 @@ func _build_bookie(root: Control) -> Control:
 	)
 	all_in.custom_minimum_size = Vector2(100, 38)
 	_stake_buttons.append(all_in)
-	_confirm_btn = _btn(panel, "Stuff the slip", Vector2(28, 444), Vector2(484, 52), _confirm_bet)
-	_confirm_btn.custom_minimum_size = Vector2(484, 52)
-	_btn(panel, "Keep this slip  ·  walk away", Vector2(28, 508), Vector2(484, 42), close_panels)
-	var note := _label(panel, "Your ticket stays up on the right. Press B to reopen.", 13, Vector2(28, 562), MUTED)
-	note.size = Vector2(484, 40)
+	_confirm_btn = _btn(panel, "Stuff the slip", Vector2(28, 598), Vector2(524, 52), _confirm_bet)
+	_confirm_btn.custom_minimum_size = Vector2(524, 52)
+	_btn(panel, "Keep this slip  ·  walk away", Vector2(28, 658), Vector2(524, 42), close_panels)
+	var note := _label(panel, "Your ticket stays up on the right. Press B to reopen.", 13, Vector2(28, 708), MUTED)
+	note.size = Vector2(524, 40)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return overlay
 
@@ -1269,6 +1374,7 @@ func open_coop() -> void:
 	_bookie.visible = false
 	_inspect.visible = false
 	Game.set_ui_open(true)
+	_refresh_field_card()
 
 
 func open_market() -> void:
@@ -1280,6 +1386,7 @@ func open_market() -> void:
 	_bookie.visible = false
 	_inspect.visible = false
 	Game.set_ui_open(true)
+	_refresh_field_card()
 
 
 func _on_coop_changed() -> void:

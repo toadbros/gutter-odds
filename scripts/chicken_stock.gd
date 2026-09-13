@@ -92,6 +92,13 @@ const COLORS: Array[Color] = [
 	Color("f0ead8"), Color("3a3a32"), Color("8a8e86"), Color("7a6a58"),
 	Color("4a6a8a"), Color("d4a078"), Color("c42828"), Color("6b8f3a"),
 ]
+const ARCHETYPE_NAMES: PackedStringArray = ["Sprinter", "Steady", "Chaos", "Late"]
+const ARCHETYPE_LINES: PackedStringArray = [
+	"Off like a shot. Done like dinner.",
+	"Pecks straight. The boring ones cash.",
+	"Has a plan. The plan is a stone.",
+	"Loiters wide. Steals the photo.",
+]
 const FLAVORS: PackedStringArray = [
 	"Still smells like the crate it came in.",
 	"Pecks like it has a lawyer.",
@@ -189,6 +196,18 @@ static func random_color() -> Color:
 
 static func random_archetype() -> int:
 	return randi() % 4
+
+
+static func archetype_name(arch: int) -> String:
+	if arch < 0 or arch >= ARCHETYPE_NAMES.size():
+		return "Unknown"
+	return ARCHETYPE_NAMES[arch]
+
+
+static func archetype_line(arch: int) -> String:
+	if arch < 0 or arch >= ARCHETYPE_LINES.size():
+		return ""
+	return ARCHETYPE_LINES[arch]
 
 
 static func trait_name(trait_id: int) -> String:
