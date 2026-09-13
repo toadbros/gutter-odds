@@ -1,0 +1,30 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/stadium.gd" id="2_stadium"]
+[ext_resource type="Script" path="res://scripts/race_manager.gd" id="3_race"]
+[ext_resource type="Script" path="res://scripts/race_director.gd" id="4_dir"]
+[ext_resource type="PackedScene" path="res://scenes/rat_player.tscn" id="5_rat"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="6_hud"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1_main")
+
+[node name="World" type="Node3D" parent="."]
+groups=["world"]
+
+[node name="Stadium" type="Node3D" parent="World"]
+script = ExtResource("2_stadium")
+
+[node name="RaceManager" type="Node3D" parent="World"]
+script = ExtResource("3_race")
+
+[node name="RaceDirector" type="Node3D" parent="World"]
+script = ExtResource("4_dir")
+
+[node name="RatPlayer" parent="World" instance=ExtResource("5_rat")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19.4, 1.2, 1.6)
+
+[node name="HUD" type="CanvasLayer" parent="."]
+layer = 20
+script = ExtResource("6_hud")
