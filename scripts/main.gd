@@ -295,7 +295,8 @@ func _audit_oval_meshes(label: String) -> void:
 	print("SMOKE: cyl_phase=", label, " count=", all.size(), " bad=", bad.size())
 	var skipped := 0
 	for line in all:
-		if line.contains("RailPost") or line.contains("FlagPole") or line.begins_with("MeshInstance3D "):
+		var notable := line.contains(" csg ") or line.contains("PackedDirt") or line.contains("Infield") or line.contains("Oil") or line.contains("DustHaze") or line.contains("HawkShadow") or line.contains("GunPuff")
+		if not notable:
 			skipped += 1
 			continue
 		print("SMOKE: cyl ", line)
