@@ -300,20 +300,17 @@ func open_results(payload: Dictionary) -> void:
 	_results_body.append_text("[b]2nd[/b]  %s\n" % places[2])
 	_results_body.append_text("[b]3rd[/b]  %s\n\n" % places[3])
 	_results_body.append_text("[b]%s[/b]\n" % payload.get("race_name", "The card"))
-	_results_body.append_text("[b]%s[/b] takes the ring.\n" % payload.get("winner_name", "A chicken"))
+	var roast := str(payload.get("roast", ""))
 	var fried := str(payload.get("fried_name", ""))
 	var fried_owner := str(payload.get("fried_owner", ""))
-	var fryer_line := str(payload.get("fryer_line", ""))
-	var punchline := str(payload.get("punchline", ""))
-	if not fried.is_empty():
-		var crisp := RaceChaos.fryer_crisp_line(fried, fried_owner)
-		_results_body.append_text("[color=#e8a028]%s[/color]\n" % crisp)
-		if not fryer_line.is_empty() and fryer_line != crisp:
-			_results_body.append_text("%s\n" % fryer_line)
-		if not punchline.is_empty():
-			_results_body.append_text("[i]%s[/i]\n" % punchline)
-		if payload.get("fried_owned", false):
-			_results_body.append_text("The fryer paid %d caps for the carcass.\n" % ChickenStock.FRY_PAYOUT)
+	if roast.is_empty():
+		_results_body.append_text("[b]%s[/b] takes the ring.\n" % payload.get("winner_name", "A chicken"))
+		if not fried.is_empty():
+			_results_body.append_text("[color=#e8a028]%s[/color]\n" % RaceChaos.fryer_crisp_line(fried, fried_owner))
+	else:
+		_results_body.append_text("[color=#e8a028]%s[/color]\n" % roast)
+	if payload.get("fried_owned", false) and not fried.is_empty():
+		_results_body.append_text("The fryer paid %d caps for the carcass.\n" % ChickenStock.FRY_PAYOUT)
 	if int(payload.get("purse_won", 0)) > 0:
 		_results_body.append_text("Your bird took the purse: [color=#c4e08a]+%d[/color]\n" % int(payload.get("purse_won", 0)))
 	if payload.get("wing_complete", false):

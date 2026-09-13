@@ -8,6 +8,10 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--chaos-smoke"):
 		_run_chaos_smoke()
 		return
+	if OS.get_cmdline_user_args().has("--roast-smoke"):
+		_print_roast_copy_smoke()
+		get_tree().quit()
+		return
 	_run_headless_smoke()
 
 
@@ -112,6 +116,34 @@ func _print_roast_copy_smoke() -> void:
 	var house := RaceChaos.fryer_crisp_line("Churchyard", "")
 	if not house.contains("Churchyard"):
 		push_error("SMOKE: barn fryer line missing bird")
+	NetPlay.roster.clear()
+	for i in 6:
+		NetPlay.roster[i + 1] = {"name": "Seat%d" % (i + 1), "ready": true}
+	var seat6 := Game.fried_owner_name(6, "ch_fried")
+	print("SMOKE: six_seat_owner=", seat6)
+	if seat6 != "Seat6":
+		push_error("SMOKE: trainer name for seat 6 drifted")
+	var peer_line := RaceChaos.fryer_owner_line("Bird6", seat6)
+	var peer_roast := RaceChaos.table_roast("Bird1", peer_line, punch)
+	var host_payload := {
+		"winner_name": "Bird1",
+		"fried_name": "Bird6",
+		"fried_owner": seat6,
+		"fried_owned": false,
+		"bet_amount": 10,
+		"won": false,
+		"roast": peer_roast,
+		"fryer_line": peer_line,
+		"punchline": punch,
+	}
+	Game._play_results_roast(host_payload)
+	var shared := str(host_payload.get("table_toast", ""))
+	print("SMOKE: client_shared_toast=", shared)
+	if not shared.contains("Seat6") or not shared.contains("Bird6") or not shared.contains("Bird1"):
+		push_error("SMOKE: shared 6p toast missing winner or fried bird+owner")
+	if not shared.contains("Your slip is trash"):
+		push_error("SMOKE: shared 6p toast missing local payout")
+	NetPlay.roster.clear()
 	print("SMOKE: roast copy ok")
 
 
