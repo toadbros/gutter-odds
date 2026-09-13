@@ -962,7 +962,7 @@ func stamp_tell_smoke_traits() -> void:
 			Snail.Archetype.SPRINTER:
 				ids = ChickenStock.traits_from([ChickenStock.Trait.GREASE_LEGS])
 			Snail.Archetype.STEADY:
-				ids = ChickenStock.traits_from([ChickenStock.Trait.RAIL_RAT])
+				ids = ChickenStock.traits_from([ChickenStock.Trait.HAWK_BLIND])
 		snail.traits = ids
 	_refresh_board()
 	Game.bet_changed.emit()

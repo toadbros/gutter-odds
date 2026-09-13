@@ -42,7 +42,7 @@ const TELL_HUNGRY_CORN := "Hungry. Don’t trust the dirt."
 const TELL_SPRINTER_OIL := "Fast until the skillet."
 const TELL_SPRINTER_GUN := "Jumps at bangs. Sometimes wins."
 const TELL_STEADY_DOG := "Safe on the rail. Until dogs."
-const TELL_SPOOKY_HAWK := "Hates the sky."
+const TELL_HAWK_BLIND := "Hawk? What hawk."
 const TELL_LATE_HAWK := "Waits out the dive."
 const TELL_GREASE_LUCKY := "Skillet doesn’t scare this one."
 const TELL_GLUE_BEAK := "Will stop to eat. Guaranteed."
@@ -92,11 +92,12 @@ static func is_hawk_card(condition: int, event: int = LiveEvent.NONE) -> bool:
 # One tell. Chemistry (tonight's card) beats quirk/archetype defaults.
 # Priority: Chaos/Hungry/Glue-Beak corn > Sprinter oil > Steady dog > Hawk pairs > rest.
 # CORN_FIEND = Hungry (and Glue-Beak when no corn match). GREASE_LEGS = Grease-Lucky.
-# HAWK_BLIND is calm, not Spooky — mapping it to "Hates the sky." would lie.
+# HAWK_BLIND is the calm/skip-hawk quirk — "Hawk? What hawk." matches the sim.
 static func card_tell(arch: int, traits: Variant, condition: int, event: int = LiveEvent.NONE) -> String:
 	var ids := ChickenStock.traits_from(traits)
 	var hungry := ids.has(ChickenStock.Trait.CORN_FIEND)
 	var grease_lucky := ids.has(ChickenStock.Trait.GREASE_LEGS)
+	var hawk_blind := ids.has(ChickenStock.Trait.HAWK_BLIND)
 	var corn := is_corn_card(condition, event)
 	var oil := is_oil_card(condition, event)
 	var dog := is_dog_card(condition, event)
@@ -110,6 +111,8 @@ static func card_tell(arch: int, traits: Variant, condition: int, event: int = L
 		return TELL_SPRINTER_OIL
 	if dog and arch == 1:
 		return TELL_STEADY_DOG
+	if hawk and hawk_blind:
+		return TELL_HAWK_BLIND
 	if hawk and arch == 3:
 		return TELL_LATE_HAWK
 	if oil and grease_lucky:

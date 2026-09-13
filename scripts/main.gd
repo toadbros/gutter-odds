@@ -285,6 +285,23 @@ func _print_tell_card_smoke() -> void:
 	if oil_hits <= 0:
 		push_error("SMOKE: grease card missing skillet chemistry")
 	print("SMOKE: grease chemistry rows=", oil_hits)
+	manager.force_card_condition(RaceChaos.Condition.STORM_COMING)
+	var hawk_blind_hits := 0
+	var late_hawk_hits := 0
+	print("SMOKE: force_condition=", RaceChaos.condition_name(manager.card_condition))
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		var row := snail.bet_card_text()
+		print("SMOKE: tell_row=", i + 1, " cond=Storm Coming text=", row.replace("\n", " | "))
+		if row.contains(RaceChaos.TELL_HAWK_BLIND):
+			hawk_blind_hits += 1
+		if row.contains(RaceChaos.TELL_LATE_HAWK):
+			late_hawk_hits += 1
+	if hawk_blind_hits <= 0:
+		push_error("SMOKE: storm card missing Hawk Blind chemistry")
+	if late_hawk_hits <= 0:
+		push_error("SMOKE: storm card missing Late hawk chemistry")
+	print("SMOKE: hawk_blind rows=", hawk_blind_hits, " late_hawk rows=", late_hawk_hits)
 	for i in manager.field.size():
 		manager.field[i].traits = ChickenStock.traits_from(saved[i])
 	manager.force_card_condition(prev_cond)
@@ -299,12 +316,17 @@ func _assert_tell_copy() -> void:
 	var fair := RaceChaos.Condition.FAIR_DIRT
 	var hungry: Array = [ChickenStock.Trait.CORN_FIEND]
 	var grease: Array = [ChickenStock.Trait.GREASE_LEGS]
+	var hawk_blind: Array = [ChickenStock.Trait.HAWK_BLIND]
 	_expect_tell(2, [], corn, 0, RaceChaos.TELL_CHAOS_CORN, "chaos_corn")
 	_expect_tell(1, hungry, corn, 0, RaceChaos.TELL_HUNGRY_CORN, "hungry_corn")
 	_expect_tell(0, [], oil, 0, RaceChaos.TELL_SPRINTER_OIL, "sprinter_oil")
 	_expect_tell(0, [], fair, RaceChaos.LiveEvent.FALSE_GUN, RaceChaos.TELL_SPRINTER_GUN, "sprinter_gun")
 	_expect_tell(1, [], dust, 0, RaceChaos.TELL_STEADY_DOG, "steady_dog")
 	_expect_tell(3, [], storm, 0, RaceChaos.TELL_LATE_HAWK, "late_hawk")
+	_expect_tell(1, hawk_blind, storm, 0, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_storm")
+	_expect_tell(0, hawk_blind, fair, RaceChaos.LiveEvent.HAWK, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_event")
+	_expect_tell(3, hawk_blind, storm, 0, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_over_late")
+	_expect_tell(1, hawk_blind, fair, 0, RaceChaos.TELL_STEADY, "hawk_blind_no_hawk")
 	_expect_tell(1, grease, oil, 0, RaceChaos.TELL_GREASE_LUCKY, "grease_lucky")
 	_expect_tell(1, hungry, fair, 0, RaceChaos.TELL_HUNGRY, "hungry_default")
 	_expect_tell(0, [], fair, 0, RaceChaos.TELL_SPRINTER, "sprinter_default")
