@@ -165,9 +165,56 @@ func set_binoculars(on: bool) -> void:
 	_binoculars.visible = on
 
 
-func set_camera_mode(cinematic: bool) -> void:
-	_cam_mode.visible = Game.phase == Game.Phase.RACE or Game.phase == Game.Phase.COUNTDOWN
-	_cam_mode.text = "RACE CAMERAS" if cinematic else "ON THE RAIL"
+func set_camera_mode(cinematic: bool, shot: String = "") -> void:
+	_cam_mode.visible = Game.phase == Game.Phase.RACE or Game.phase == Game.Phase.COUNTDOWN or Game.phase == Game.Phase.RESULTS
+	if not shot.is_empty():
+		_cam_mode.text = shot
+	else:
+		_cam_mode.text = "PACK CAM" if cinematic else "ON THE RAIL"
+
+
+func camera_mode_text() -> String:
+	return _cam_mode.text if _cam_mode else ""
+
+
+func yell_text() -> String:
+	return _yell_title.text if _yell_title else ""
+
+
+func show_finish_punch(bird_name: String, yours: bool = false) -> void:
+	if _yell_title:
+		_yell_title.text = "THEY'RE IN"
+		_yell_title.modulate = Color.WHITE
+		_yell_title.add_theme_font_size_override("font_size", 78)
+		_yell_title.add_theme_color_override("font_color", Color("e8c03a"))
+		_punch_yell()
+	_callout.text = ("%s  ·  YOURS" % bird_name) if yours else ("%s TAKES IT" % bird_name)
+	_callout.add_theme_font_size_override("font_size", 34)
+	_callout.add_theme_color_override("font_color", Color("c4e08a") if yours else INK)
+	_callout.modulate.a = 1.0
+	_callout_time = 3.4
+	if _flash:
+		_flash.color = Color(1.0, 0.94, 0.72, 0.55)
+	_play_gun()
+
+
+func show_results_punch(bird_name: String = "", yours: bool = false) -> void:
+	if _yell_title:
+		_yell_title.text = "PHOTO FINISH"
+		_yell_title.modulate = Color.WHITE
+		_yell_title.add_theme_font_size_override("font_size", 72)
+		_yell_title.add_theme_color_override("font_color", Color("e8c03a"))
+		_punch_yell()
+	if not bird_name.is_empty() and (_callout_time <= 0.0 or _callout.text.is_empty()):
+		_callout.text = ("%s  ·  YOURS" % bird_name) if yours else ("%s takes the ring." % bird_name)
+		_callout.add_theme_font_size_override("font_size", 28)
+		_callout.modulate.a = 1.0
+		_callout_time = 2.4
+	if _flash:
+		_flash.color = Color(1.0, 0.94, 0.72, 0.42)
+	_cam_mode.visible = true
+	if _cam_mode.text.is_empty():
+		_cam_mode.text = "PHOTO FINISH"
 
 
 func set_standings(rows: Array) -> void:
@@ -200,7 +247,8 @@ func show_toast(text: String) -> void:
 
 
 func show_callout(text: String) -> void:
-	if _yell_title and _yell_title.modulate.a > 0.05 and not _yell_title.text.is_empty():
+	# Finish/event yells win mid-race. RESULTS roast still has to land.
+	if Game.phase != Game.Phase.RESULTS and _yell_title and _yell_title.modulate.a > 0.05 and not _yell_title.text.is_empty():
 		return
 	if _yell_title:
 		_yell_title.modulate.a = 0.0
@@ -368,9 +416,9 @@ func _on_phase(phase: Game.Phase) -> void:
 		_ticket.visible = not Game.is_sitting()
 	if _caps:
 		_caps.visible = not Game.is_sitting()
-	_standings.visible = phase == Game.Phase.RACE
+	_standings.visible = phase == Game.Phase.RACE or phase == Game.Phase.RESULTS
 	_refresh_field_card()
-	_cam_mode.visible = phase == Game.Phase.RACE or phase == Game.Phase.COUNTDOWN
+	_cam_mode.visible = phase == Game.Phase.RACE or phase == Game.Phase.COUNTDOWN or phase == Game.Phase.RESULTS
 	_help.visible = not Game.is_sitting()
 	if phase != Game.Phase.RESULTS and _results:
 		_results.visible = false
@@ -404,19 +452,14 @@ func _on_phase(phase: Game.Phase) -> void:
 			set_camera_mode(true)
 		Game.Phase.RACE:
 			_phase.text = "LIVE · %s  ·  %s" % [Game.race_name(), RaceChaos.condition_name(Game.card_condition()).to_upper()]
-			_help.text = "C race cameras / walk the rail  ·  VIP: hold RMB for binoculars"
+			_help.text = "C pack / your bird / rail  ·  VIP: hold RMB for binoculars"
 			if OS.is_debug_build():
 				_help.text += "  ·  1 Hawk  2 Corn  3 Oil  4 Dog  5 Gun  6 Crowd"
 			set_camera_mode(true)
 		Game.Phase.RESULTS:
 			_phase.text = "PHOTO FINISH"
 			_help.text = "DEAL THE NEXT CARD  ·  or it deals itself"
-			if _callout:
-				_callout.modulate.a = 0.0
-				_callout_time = 0.0
-			if _yell_title:
-				_yell_title.modulate.a = 0.0
-				_yell_title.text = ""
+			show_results_punch()
 	_refresh_loop_clocks()
 	_refresh_meet()
 

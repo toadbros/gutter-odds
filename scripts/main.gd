@@ -15,6 +15,9 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--mesh-smoke"):
 		_run_mesh_smoke()
 		return
+	if OS.get_cmdline_user_args().has("--feel-smoke"):
+		_run_feel_smoke()
+		return
 	_run_headless_smoke()
 
 
@@ -200,6 +203,134 @@ func _print_bet_card_smoke() -> void:
 		if hud.has_method("close_panels"):
 			hud.call("close_panels")
 	print("SMOKE: bet cards readable. types=", seen.keys())
+
+
+func _run_feel_smoke() -> void:
+	var yells: Array[String] = []
+	var flips := 0
+	var beats := 0
+	Game.event_callout.connect(func(text: String, event_id: int) -> void:
+		yells.append("%s:%s" % [RaceChaos.event_title(event_id), text])
+		print("SMOKE: yell=", RaceChaos.event_title(event_id), " line=", text)
+	)
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: feel phase=", phase)
+		if phase == Game.Phase.OPEN:
+			get_tree().create_timer(0.08).timeout.connect(func() -> void:
+				if Game.phase != Game.Phase.OPEN:
+					return
+				var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+				if manager:
+					var mine := manager.mark_local_entry(0)
+					if mine:
+						print("SMOKE: marked=", mine.owned_nametag(), " id=", mine.chicken_id)
+				Game.place_bet(0, 5)
+				Game.ring_the_bell()
+			)
+		elif phase == Game.Phase.RACE:
+			get_tree().create_timer(0.12).timeout.connect(_probe_feel_race)
+		elif phase == Game.Phase.RESULTS:
+			var hud := get_tree().get_first_node_in_group("hud")
+			var director := get_tree().get_first_node_in_group("race_director")
+			var yell := ""
+			var cam := ""
+			if hud and hud.has_method("camera_mode_text"):
+				cam = str(hud.call("camera_mode_text"))
+			if director and director.has_method("camera_shot_name"):
+				cam = str(director.call("camera_shot_name"))
+			if hud and hud.has_method("yell_text"):
+				yell = str(hud.call("yell_text"))
+			print("SMOKE: results_cam=", cam, " results_yell=", yell, " flips=", flips, " beats=", beats)
+			get_tree().create_timer(0.15).timeout.connect(func() -> void:
+				print("SMOKE: feel done yells=", yells.size(), " flips=", flips)
+				get_tree().quit()
+			)
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _probe_feel_race() -> void:
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	var director := get_tree().get_first_node_in_group("race_director")
+	var hud := get_tree().get_first_node_in_group("hud")
+	if manager == null:
+		push_error("SMOKE: no race manager")
+		get_tree().quit()
+		return
+	if manager.local_entry() == null:
+		manager.mark_local_entry(0)
+	await get_tree().process_frame
+	var feel: Dictionary = manager.feel_snapshot()
+	print("SMOKE: mine=", feel.get("mine_tag"), " marked=", feel.get("mine_marked"), " lead=", feel.get("lead"))
+	if str(feel.get("mine_tag", "")).find("YOURS") < 0:
+		push_error("SMOKE: own-bird nametag missing YOURS")
+	if not bool(feel.get("mine_marked", false)):
+		push_error("SMOKE: own-bird ring missing")
+	if director:
+		print("SMOKE: cam0=", director.camera_shot_name())
+		director.toggle_cinematic()
+		print("SMOKE: cam1=", director.camera_shot_name(), " mine_shot=", director.is_tracking_mine())
+		if not director.is_tracking_mine():
+			push_error("SMOKE: C did not follow the entered bird")
+		director.toggle_cinematic()
+		print("SMOKE: cam2=", director.camera_shot_name())
+		director.toggle_cinematic()
+		print("SMOKE: cam3=", director.camera_shot_name())
+	if hud and hud.has_method("camera_mode_text"):
+		print("SMOKE: hud_cam=", hud.call("camera_mode_text"))
+	var order: Array[int] = [
+		RaceChaos.LiveEvent.HAWK,
+		RaceChaos.LiveEvent.CORN_RAIN,
+		RaceChaos.LiveEvent.OIL_SLICK,
+		RaceChaos.LiveEvent.LOOSE_DOG,
+		RaceChaos.LiveEvent.FALSE_GUN,
+		RaceChaos.LiveEvent.CROWD_SQUEEZE,
+	]
+	var flips := 0
+	var beats := 0
+	for event in order:
+		var before: Dictionary = manager.feel_snapshot()
+		manager.force_live_event(event)
+		var after: Dictionary = manager.feel_snapshot()
+		var beat: Dictionary = after.get("beat", {})
+		var flipped := bool(beat.get("flipped", false)) or str(before.get("lead", "")) != str(after.get("lead", ""))
+		var dumped := absf(float(after.get("lead_d", 0.0)) - float(before.get("lead_d", 0.0))) > 0.04
+		var tagged: PackedStringArray = after.get("tags", PackedStringArray())
+		if flipped:
+			flips += 1
+		if dumped or not tagged.is_empty() or not str(beat.get("victim", "")).is_empty():
+			beats += 1
+		print(
+			"SMOKE: forced=", RaceChaos.event_name(event),
+			" lead=", before.get("lead"), "->", after.get("lead"),
+			" flip=", flipped,
+			" dump=", snappedf(float(after.get("lead_d", 0.0)) - float(before.get("lead_d", 0.0)), 0.01),
+			" victim=", beat.get("victim", ""),
+			" tags=", ",".join(tagged)
+		)
+		if not dumped and tagged.is_empty() and str(beat.get("victim", "")).is_empty():
+			push_error("SMOKE: %s had no pack/body beat" % RaceChaos.event_name(event))
+		await get_tree().create_timer(0.08).timeout
+	if beats < 6:
+		push_error("SMOKE: expected a body beat on every live event")
+	if manager.field.size() >= 2:
+		var closer: Snail = manager.field[1]
+		closer.distance = manager.track_length
+		closer.vel = 2.0
+		await get_tree().process_frame
+		await get_tree().process_frame
+		print("SMOKE: finish_punched=", manager.did_finish_punch(), " first_at=", manager.first_finish_at)
+		if not manager.did_finish_punch():
+			push_error("SMOKE: first-across finish punch missing")
+		if hud and hud.has_method("yell_text"):
+			var yell := str(hud.call("yell_text"))
+			print("SMOKE: finish_yell=", yell)
+			if yell != "THEY'RE IN":
+				push_error("SMOKE: finish yell missing")
+	print("SMOKE: feel mid-race flips=", flips, " beats=", beats)
+	get_tree().quit()
 
 
 func _run_chaos_smoke() -> void:
