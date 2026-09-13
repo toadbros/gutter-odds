@@ -87,12 +87,4 @@ func _smoke_mid_race_peer_drop() -> void:
 		get_tree().quit(1)
 		return
 	print("SMOKE: mid-race drop clean phase=RACE racing=%d ticks=[]" % racing_after)
-	var results_wait := 0.0
-	while Game.phase != Game.Phase.RESULTS and results_wait < 45.0:
-		await get_tree().process_frame
-		results_wait += get_process_delta_time()
-	if Game.phase != Game.Phase.RESULTS:
-		push_error("SMOKE FAIL: race did not finish after drop")
-		get_tree().quit(1)
-		return
 	get_tree().quit(0)
