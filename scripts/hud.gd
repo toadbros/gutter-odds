@@ -1194,16 +1194,16 @@ func _build_bookie(root: Control) -> Control:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var scroll := ScrollContainer.new()
 	scroll.position = Vector2(28, 80)
-	scroll.size = Vector2(524, 430)
+	scroll.size = Vector2(524, 468)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
 	_bookie_list = VBoxContainer.new()
 	_bookie_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bookie_list.add_theme_constant_override("separation", 6)
 	scroll.add_child(_bookie_list)
-	_stake_label = _label(panel, "Stake: 10 caps", 16, Vector2(28, 520), INK)
+	_stake_label = _label(panel, "Stake: 10 caps", 16, Vector2(28, 556), INK)
 	var stake_row := HBoxContainer.new()
-	stake_row.position = Vector2(28, 548)
+	stake_row.position = Vector2(28, 584)
 	stake_row.add_theme_constant_override("separation", 8)
 	panel.add_child(stake_row)
 	_stake_buttons.clear()
@@ -1224,10 +1224,10 @@ func _build_bookie(root: Control) -> Control:
 	)
 	all_in.custom_minimum_size = Vector2(100, 38)
 	_stake_buttons.append(all_in)
-	_confirm_btn = _btn(panel, "Stuff the slip", Vector2(28, 598), Vector2(524, 52), _confirm_bet)
+	_confirm_btn = _btn(panel, "Stuff the slip", Vector2(28, 634), Vector2(524, 52), _confirm_bet)
 	_confirm_btn.custom_minimum_size = Vector2(524, 52)
-	_btn(panel, "Keep this slip  ·  walk away", Vector2(28, 658), Vector2(524, 42), close_panels)
-	var note := _label(panel, "Your ticket stays up on the right. Press B to reopen.", 13, Vector2(28, 708), MUTED)
+	_btn(panel, "Keep this slip  ·  walk away", Vector2(28, 694), Vector2(524, 42), close_panels)
+	var note := _label(panel, "Your ticket stays up on the right. Press B to reopen.", 13, Vector2(28, 744), MUTED)
 	note.size = Vector2(524, 40)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return overlay
