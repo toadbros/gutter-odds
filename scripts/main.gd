@@ -221,7 +221,7 @@ func _run_tell_smoke() -> void:
 		print("SMOKE: tell phase=", phase)
 		if phase != Game.Phase.OPEN:
 			return
-		_print_tell_card_smoke()
+		await _print_tell_card_smoke()
 		get_tree().quit()
 	)
 	await get_tree().process_frame
@@ -230,9 +230,14 @@ func _run_tell_smoke() -> void:
 
 
 func _print_tell_card_smoke() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
 	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
 	if manager == null:
 		push_error("SMOKE: no race manager for tells")
+		return
+	if manager.field.is_empty():
+		push_error("SMOKE: field empty before tell rows")
 		return
 	_assert_tell_copy()
 	var prev_cond := manager.card_condition
