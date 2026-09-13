@@ -18,6 +18,10 @@ func _ready() -> void:
 
 
 func activate() -> void:
+	if _enabled:
+		if _cinematic and _chase:
+			_chase.current = true
+		return
 	_enabled = true
 	_cinematic = true
 	_snap = true
@@ -49,6 +53,13 @@ func toggle_cinematic() -> void:
 
 func is_cinematic() -> bool:
 	return _enabled and _cinematic
+
+
+func reassert_camera() -> void:
+	if _enabled and _cinematic and _chase:
+		_chase.current = true
+	else:
+		_restore_player_cam()
 
 
 func _process(delta: float) -> void:
