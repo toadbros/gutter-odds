@@ -71,6 +71,10 @@ func is_sitting() -> bool:
 	return phase == Phase.MENU or phase == Phase.LOBBY
 
 
+func is_live_card() -> bool:
+	return phase == Phase.COUNTDOWN or phase == Phase.RACE or phase == Phase.RESULTS
+
+
 func enter_lobby() -> void:
 	ui_open = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -182,7 +186,7 @@ func pack_meet() -> Dictionary:
 	return {
 		"phase": int(phase),
 		"meet_index": meet_index,
-		"countdown": countdown,
+		"countdown": countdown if phase == Phase.COUNTDOWN else 0.0,
 		"first_card": _first_card,
 		"card_condition": int(chaos.get("card_condition", 0)),
 		"event_id": int(chaos.get("event_id", 0)),
@@ -197,9 +201,14 @@ func apply_meet(payload: Dictionary) -> void:
 	_first_card = bool(payload.get("first_card", _first_card))
 	var next_phase: Phase = int(payload.get("phase", phase)) as Phase
 	var prev := phase
+	# Roster / field sync mid-race must not drop survivors back into countdown residue.
+	if prev == Phase.RACE and next_phase == Phase.COUNTDOWN:
+		next_phase = Phase.RACE
+	elif prev == Phase.RESULTS and next_phase == Phase.COUNTDOWN:
+		next_phase = Phase.RESULTS
 	if is_sitting() and next_phase != Phase.MENU and next_phase != Phase.LOBBY:
 		begin_guest()
-	if next_phase == Phase.COUNTDOWN:
+	if next_phase == Phase.COUNTDOWN and prev != Phase.RACE and prev != Phase.RESULTS:
 		countdown = float(payload.get("countdown", COUNT_BEAT * 3.0))
 		var shown := 0 if countdown <= 0.0 else clampi(int(ceil(countdown / COUNT_BEAT)), 0, 3)
 		var entering := prev != Phase.COUNTDOWN
@@ -209,18 +218,22 @@ func apply_meet(payload: Dictionary) -> void:
 	if next_phase != Phase.MENU and next_phase != Phase.LOBBY:
 		_set_phase(next_phase)
 	if next_phase == Phase.OPEN:
-		set_ui_open(false)
-		get_tree().call_group("race_director", "deactivate")
+		if prev != Phase.OPEN:
+			set_ui_open(false)
+			get_tree().call_group("race_director", "deactivate")
 	elif next_phase == Phase.COUNTDOWN:
-		get_tree().call_group("race_director", "activate")
 		if prev != Phase.COUNTDOWN:
+			get_tree().call_group("race_director", "activate")
 			get_tree().call_group("race_manager", "move_to_gates")
 	elif next_phase == Phase.RACE:
-		get_tree().call_group("race_director", "activate")
 		if prev == Phase.COUNTDOWN:
 			get_tree().call_group("race_manager", "start_race")
+		elif prev != Phase.RACE:
+			get_tree().call_group("race_director", "activate")
+			get_tree().call_group("race_manager", "start_race")
 	elif next_phase == Phase.RESULTS:
-		get_tree().call_group("race_director", "deactivate")
+		if prev != Phase.RESULTS:
+			get_tree().call_group("race_director", "deactivate")
 	var manager = get_tree().get_first_node_in_group("race_manager")
 	if manager and manager.has_method("apply_chaos_state"):
 		manager.apply_chaos_state(payload)
@@ -744,6 +757,8 @@ func _start_race() -> void:
 
 
 func _set_phase(next: Phase) -> void:
+	if phase == next:
+		return
 	phase = next
 	phase_changed.emit(phase)
 

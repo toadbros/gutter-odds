@@ -73,10 +73,18 @@ func apply_remote_pose(pos: Vector3, yaw: float, pitch: float) -> void:
 	_model.visible = true
 
 
+func prepare_despawn() -> void:
+	if _camera:
+		_camera.current = false
+
+
 func _retag() -> void:
 	if not local_controlled:
 		return
-	_peer_id = NetPlay.local_id()
+	var next_id := NetPlay.local_id()
+	if _peer_id != next_id and is_in_group("player_%d" % _peer_id):
+		remove_from_group("player_%d" % _peer_id)
+	_peer_id = next_id
 	add_to_group("player_%d" % _peer_id)
 
 

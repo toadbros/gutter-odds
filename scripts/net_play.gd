@@ -447,9 +447,12 @@ func _on_peer_connected(id: int) -> void:
 func _on_peer_disconnected(id: int) -> void:
 	entries.erase(id)
 	roster.erase(id)
-	get_tree().call_group("player_%d" % id, "queue_free")
+	_despawn_puppet(id)
 	if is_server():
-		get_tree().call_group("race_manager", "apply_player_entries")
+		# Live cards keep the field as-is so survivors don't get a countdown
+		# replay, a camera snap, or a restart from the pens.
+		if not Game.is_live_card():
+			get_tree().call_group("race_manager", "apply_player_entries")
 		_sync_entries()
 		_broadcast_roster()
 		_set_status("Someone walked off with their crate.")
@@ -488,6 +491,18 @@ func _spawn_all_puppets() -> void:
 	_spawn_puppet(1)
 	for id in multiplayer.get_peers():
 		_spawn_puppet(int(id))
+
+
+func _despawn_puppet(peer_id: int) -> void:
+	if peer_id == local_id():
+		return
+	for node in get_tree().get_nodes_in_group("player_%d" % peer_id):
+		if node.has_method("prepare_despawn"):
+			node.prepare_despawn()
+		node.queue_free()
+	var director := get_tree().get_first_node_in_group("race_director")
+	if director and director.has_method("reassert_camera"):
+		director.reassert_camera()
 
 
 func _spawn_puppet(peer_id: int) -> void:

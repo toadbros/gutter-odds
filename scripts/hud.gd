@@ -346,6 +346,8 @@ func _on_money(amount: int) -> void:
 func _on_countdown(seconds: int) -> void:
 	if _countdown == null:
 		return
+	if Game.phase != Game.Phase.COUNTDOWN:
+		return
 	_countdown.modulate.a = 1.0
 	if seconds <= 0:
 		_countdown.text = "GO"

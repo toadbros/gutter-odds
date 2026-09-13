@@ -147,6 +147,8 @@ func apply_player_entries() -> void:
 		return
 	if NetPlay.is_client():
 		return
+	if Game.is_live_card():
+		return
 	var used: Dictionary = {}
 	for pid in NetPlay.entries.keys():
 		var bird: Dictionary = ChickenStock.from_payload(NetPlay.entries[pid])
@@ -189,7 +191,9 @@ func broadcast_now() -> void:
 func apply_network_field(payload: Array) -> void:
 	if NetPlay.is_server():
 		return
-	racing = false
+	var live := Game.phase == Game.Phase.RACE or Game.phase == Game.Phase.COUNTDOWN
+	if not live:
+		racing = false
 	_ensure_snails()
 	var path := _path()
 	if path and path.curve:
@@ -203,9 +207,16 @@ func apply_network_field(payload: Array) -> void:
 			bird["hunger"] = float(data.get("hunger", bird.get("hunger", 80.0)))
 			bird["traits"] = ChickenStock.traits_from(data.get("traits", bird.get("traits", [])))
 			var start_groove := float(data.get("groove", lerpf(0.42, 0.9, float(i) / 5.0)))
-			field[i].configure(bird, i + 1, start_groove)
-			field[i].lap_length = track_length
-			_place_in_pen(field[i], i)
+			if live:
+				# Keep live poses. configure() zeros distance and would yank the pack.
+				field[i].chicken_id = str(bird.get("id", field[i].chicken_id))
+				field[i].owner_id = int(bird.get("owner_id", field[i].owner_id))
+				field[i].display_name = str(bird.get("name", field[i].display_name))
+				field[i].lap_length = track_length
+			else:
+				field[i].configure(bird, i + 1, start_groove)
+				field[i].lap_length = track_length
+				_place_in_pen(field[i], i)
 	_refresh_board()
 	Game.bet_changed.emit()
 
