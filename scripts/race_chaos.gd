@@ -52,21 +52,63 @@ static func event_name(event: int) -> String:
 	return EVENT_NAMES[i]
 
 
+static func event_title(event: int) -> String:
+	var name := event_name(event)
+	return name.to_upper() if not name.is_empty() else ""
+
+
 static func event_callout(event: int) -> String:
 	match event:
 		LiveEvent.OIL_SLICK:
-			return "Oil on the oval. Somebody dumped the skillet."
+			return "Somebody dumped the skillet. Sprinters eat dirt."
 		LiveEvent.CORN_RAIN:
-			return "They're throwing scratch. The field's lost its mind."
+			return "They're throwing scratch. The lead just forgot how to run."
 		LiveEvent.HAWK:
-			return "HAWK. Everybody down."
+			return "Everybody down. Belly-flop."
 		LiveEvent.FALSE_GUN:
 			return "A gun in the stands. That wasn't the starter."
 		LiveEvent.LOOSE_DOG:
-			return "A dog's in the infield. The rail just panicked."
+			return "A dog's on the rail. Steady birds dump inside."
 		LiveEvent.CROWD_SQUEEZE:
 			return "The crowd leans in. They're pinning the pack."
 	return ""
+
+
+static func event_rank(event: int) -> int:
+	match event:
+		LiveEvent.HAWK, LiveEvent.CORN_RAIN:
+			return 1
+		LiveEvent.OIL_SLICK, LiveEvent.LOOSE_DOG:
+			return 2
+		LiveEvent.FALSE_GUN, LiveEvent.CROWD_SQUEEZE:
+			return 3
+	return 3
+
+
+static func event_yell_secs(event: int) -> float:
+	match event_rank(event):
+		1:
+			return 4.2
+		2:
+			return 3.6
+	return 3.1
+
+
+static func event_flash(event: int) -> Color:
+	match event:
+		LiveEvent.OIL_SLICK:
+			return Color("3a2a10")
+		LiveEvent.CORN_RAIN:
+			return Color("e8c03a")
+		LiveEvent.HAWK:
+			return Color("6a2030")
+		LiveEvent.FALSE_GUN:
+			return Color("f0ead8")
+		LiveEvent.LOOSE_DOG:
+			return Color("8a5a28")
+		LiveEvent.CROWD_SQUEEZE:
+			return Color("8a3a4a")
+	return Color("b08d57")
 
 
 static func roll_condition(wing: int) -> int:
@@ -220,27 +262,40 @@ static func wants_corn_freeze(arch: int, hunger: float) -> bool:
 static func track_tint(condition: int) -> Color:
 	match condition:
 		Condition.DUST_BOWL:
-			return Color("d8c48a")
+			return Color("e8d070")
 		Condition.GREASE_DRIP:
-			return Color("8a6a38")
+			return Color("4a3214")
 		Condition.KERNEL_SCATTER:
-			return Color("c4a048")
+			return Color("e0a828")
 		Condition.STORM_COMING:
-			return Color("7a6a52")
+			return Color("4a4a58")
 	return Color("c4a060")
 
 
 static func dirt_tint(condition: int) -> Color:
 	match condition:
 		Condition.DUST_BOWL:
-			return Color("e4d09a")
+			return Color("f0dc88")
 		Condition.GREASE_DRIP:
-			return Color("6a5230")
+			return Color("2e2010")
 		Condition.KERNEL_SCATTER:
-			return Color("d2b05a")
+			return Color("f0c040")
 		Condition.STORM_COMING:
-			return Color("8a7a62")
+			return Color("5a5462")
 	return Color("d2b07a")
+
+
+static func condition_banner_color(condition: int) -> Color:
+	match condition:
+		Condition.DUST_BOWL:
+			return Color("e8d070")
+		Condition.GREASE_DRIP:
+			return Color("8a6a28")
+		Condition.KERNEL_SCATTER:
+			return Color("e8c03a")
+		Condition.STORM_COMING:
+			return Color("9aa8c4")
+	return Color("f0e6d0")
 
 
 static func _jewel_event(wing: int) -> int:

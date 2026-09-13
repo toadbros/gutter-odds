@@ -5,6 +5,9 @@ func _ready() -> void:
 	$World.add_to_group("world")
 	if DisplayServer.get_name() != "headless":
 		return
+	if OS.get_cmdline_user_args().has("--chaos-smoke"):
+		_run_chaos_smoke()
+		return
 	_run_headless_smoke()
 
 
@@ -50,3 +53,51 @@ func _run_headless_smoke() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	Game.begin_night()
+
+
+func _run_chaos_smoke() -> void:
+	var yells: Array[String] = []
+	Game.event_callout.connect(func(text: String, event_id: int) -> void:
+		var title := RaceChaos.event_title(event_id)
+		if title.is_empty():
+			title = RaceChaos.condition_name(Game.card_condition())
+		var line := "SMOKE: yell=%s event=%d line=%s" % [title, event_id, text]
+		yells.append(line)
+		print(line)
+	)
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: chaos phase=", phase)
+		if phase == Game.Phase.OPEN:
+			get_tree().create_timer(0.08).timeout.connect(func() -> void:
+				if Game.phase == Game.Phase.OPEN:
+					Game.place_bet(0, 5)
+					Game.ring_the_bell()
+			)
+		elif phase == Game.Phase.RACE:
+			get_tree().create_timer(0.2).timeout.connect(_fire_chaos_order)
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _fire_chaos_order() -> void:
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	if manager == null:
+		print("SMOKE: no race manager")
+		get_tree().quit()
+		return
+	var order: Array[int] = [
+		RaceChaos.LiveEvent.HAWK,
+		RaceChaos.LiveEvent.CORN_RAIN,
+		RaceChaos.LiveEvent.OIL_SLICK,
+		RaceChaos.LiveEvent.LOOSE_DOG,
+		RaceChaos.LiveEvent.FALSE_GUN,
+		RaceChaos.LiveEvent.CROWD_SQUEEZE,
+	]
+	for event in order:
+		manager.force_live_event(event)
+		print("SMOKE: forced=", RaceChaos.event_name(event), " live=", manager.live_event)
+		await get_tree().create_timer(0.12).timeout
+	print("SMOKE: yell order done")
+	get_tree().quit()

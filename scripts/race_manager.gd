@@ -268,7 +268,8 @@ func pack_chaos() -> Dictionary:
 
 
 func apply_chaos_state(payload: Dictionary) -> void:
-	var prev := live_event
+	var prev_event := live_event
+	var prev_cond := card_condition
 	card_condition = int(payload.get("card_condition", card_condition))
 	live_event = int(payload.get("event_id", payload.get("live_event", live_event)))
 	event_t = float(payload.get("event_t", event_t))
@@ -277,10 +278,15 @@ func apply_chaos_state(payload: Dictionary) -> void:
 	if payload.has("events_left"):
 		events_left = int(payload.get("events_left", events_left))
 	get_tree().call_group("stadium", "apply_card_condition", card_condition)
-	if live_event != RaceChaos.LiveEvent.NONE and live_event != prev:
+	if live_event != RaceChaos.LiveEvent.NONE and live_event != prev_event:
 		get_tree().call_group("stadium", "show_live_event", live_event, event_at)
-	elif live_event == RaceChaos.LiveEvent.NONE and prev != RaceChaos.LiveEvent.NONE:
+	elif live_event == RaceChaos.LiveEvent.NONE and prev_event != RaceChaos.LiveEvent.NONE:
 		get_tree().call_group("stadium", "clear_live_event")
+	if card_condition != prev_cond and Game.phase == Game.Phase.OPEN:
+		Game.event_announce("%s. %s" % [
+			RaceChaos.condition_name(card_condition),
+			RaceChaos.condition_tell(card_condition),
+		], 0)
 
 
 func apply_network_event(payload: Dictionary) -> void:
@@ -293,7 +299,10 @@ func apply_network_event(payload: Dictionary) -> void:
 	apply_chaos_state(payload)
 	var line := str(payload.get("callout", RaceChaos.event_callout(live_event)))
 	if not line.is_empty():
-		Game.event_announce(line)
+		Game.event_announce(line, live_event)
+	var victim := str(payload.get("victim", ""))
+	if not victim.is_empty():
+		Game.announce(victim, true)
 
 
 func _process(delta: float) -> void:
@@ -775,6 +784,10 @@ func _roll_card_chaos() -> void:
 	_event_struck = false
 	get_tree().call_group("stadium", "apply_card_condition", card_condition)
 	get_tree().call_group("stadium", "clear_live_event")
+	Game.event_announce("%s. %s" % [
+		RaceChaos.condition_name(card_condition),
+		RaceChaos.condition_tell(card_condition),
+	], 0)
 
 
 func _tick_live_events(delta: float) -> void:
@@ -794,23 +807,66 @@ func _tick_live_events(delta: float) -> void:
 	_begin_live_event()
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	if not OS.is_debug_build():
+		return
+	if NetPlay.is_client() or not racing:
+		return
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	var picked := RaceChaos.LiveEvent.NONE
+	if event.is_action_pressed("chaos_hawk"):
+		picked = RaceChaos.LiveEvent.HAWK
+	elif event.is_action_pressed("chaos_corn"):
+		picked = RaceChaos.LiveEvent.CORN_RAIN
+	elif event.is_action_pressed("chaos_oil"):
+		picked = RaceChaos.LiveEvent.OIL_SLICK
+	elif event.is_action_pressed("chaos_dog"):
+		picked = RaceChaos.LiveEvent.LOOSE_DOG
+	elif event.is_action_pressed("chaos_gun"):
+		picked = RaceChaos.LiveEvent.FALSE_GUN
+	elif event.is_action_pressed("chaos_crowd"):
+		picked = RaceChaos.LiveEvent.CROWD_SQUEEZE
+	if picked == RaceChaos.LiveEvent.NONE:
+		return
+	force_live_event(picked)
+	get_viewport().set_input_as_handled()
+
+
+func force_live_event(event: int) -> void:
+	if event == RaceChaos.LiveEvent.NONE or not racing:
+		return
+	if NetPlay.is_client():
+		return
+	if live_event != RaceChaos.LiveEvent.NONE:
+		_clear_live_event(false)
+	_fire_live_event(event, false)
+
+
 func _begin_live_event() -> void:
 	var picked := RaceChaos.pick_live_event(card_condition, Game.race_wing_index(), events_used)
 	if picked == RaceChaos.LiveEvent.NONE:
 		events_left = 0
 		return
+	_fire_live_event(picked, true)
+
+
+func _fire_live_event(picked: int, consume: bool) -> void:
 	live_event = picked
 	event_t = 0.0
 	event_dur = RaceChaos.event_duration(live_event)
-	event_at = track_length * randf_range(0.28, 0.72)
+	event_at = _event_mark()
 	_event_struck = false
-	events_used.append(live_event)
-	events_left = maxi(events_left - 1, 0)
-	next_event_frac = RaceChaos.next_event_frac(_leader_frac())
-	_strike_live_event()
+	if consume:
+		events_used.append(live_event)
+		events_left = maxi(events_left - 1, 0)
+		next_event_frac = RaceChaos.next_event_frac(_leader_frac())
+	var victim := _strike_live_event()
 	_event_struck = true
 	var line := RaceChaos.event_callout(live_event)
-	Game.event_announce(line)
+	Game.event_announce(line, live_event)
+	if not victim.is_empty():
+		Game.announce(victim, true)
 	get_tree().call_group("stadium", "show_live_event", live_event, event_at)
 	NetPlay.send_race_event({
 		"card_condition": card_condition,
@@ -819,21 +875,39 @@ func _begin_live_event() -> void:
 		"event_dur": event_dur,
 		"event_at": event_at,
 		"callout": line,
+		"victim": victim,
 		"ended": false,
 	})
 
 
-func _strike_live_event() -> void:
+func _event_mark() -> float:
+	var leader := get_leader()
+	var lead_d := leader.distance if leader else track_length * 0.4
+	if live_event == RaceChaos.LiveEvent.OIL_SLICK:
+		return clampf(lead_d + 0.35, track_length * 0.12, track_length * 0.84)
+	return clampf(lead_d + randf_range(-0.25, 0.55), track_length * 0.12, track_length * 0.84)
+
+
+func _strike_live_event() -> String:
+	var victim := ""
 	match live_event:
 		RaceChaos.LiveEvent.HAWK:
+			var flop: Snail = null
+			var flop_h := -1.0
 			for snail in field:
 				if snail.finished or not snail.racing:
 					continue
 				if snail.has_trait(ChickenStock.Trait.HAWK_BLIND):
 					continue
+				if snail.height > flop_h:
+					flop_h = snail.height
+					flop = snail
 				snail.height = 0.0
-				snail.height_vel = -4.2
+				snail.height_vel = -5.6
+				snail.squish = 0.38
 				snail.groove = clampf(snail.groove + randf_range(-0.10, 0.22), 0.04, 0.96)
+			if flop:
+				victim = "%s belly-flops." % flop.display_name
 		RaceChaos.LiveEvent.FALSE_GUN:
 			for snail in field:
 				if snail.finished or not snail.racing:
@@ -843,23 +917,35 @@ func _strike_live_event() -> void:
 				elif snail.archetype == Snail.Archetype.SPRINTER:
 					snail.vel = maxf(snail.vel, snail.vel * 1.15 + 0.35)
 		RaceChaos.LiveEvent.CORN_RAIN:
+			var leader := get_leader()
+			if leader and leader.racing and not leader.finished and not leader.has_trait(ChickenStock.Trait.IRON_CROP):
+				leader.begin_freeze(randf_range(1.35, 2.15))
+				victim = "%s stops for corn." % leader.display_name
 			for snail in field:
 				if snail.finished or not snail.racing:
 					continue
 				if snail.has_trait(ChickenStock.Trait.IRON_CROP):
 					continue
+				if snail == leader:
+					continue
 				var hungry := RaceChaos.wants_corn_freeze(int(snail.archetype), snail.hunger)
 				if hungry or snail.has_trait(ChickenStock.Trait.CORN_FIEND):
 					snail.begin_freeze(randf_range(1.15, 2.05))
 		RaceChaos.LiveEvent.LOOSE_DOG:
+			var punished: Snail = null
 			for snail in field:
 				if snail.finished or not snail.racing:
 					continue
 				if snail.has_trait(ChickenStock.Trait.HAWK_BLIND):
 					continue
 				if snail.groove < 0.32:
-					snail.groove = clampf(snail.groove + randf_range(0.12, 0.28), 0.04, 0.96)
-					snail.vel *= 0.72
+					if punished == null or snail.archetype == Snail.Archetype.STEADY:
+						punished = snail
+					snail.groove = clampf(snail.groove + randf_range(0.16, 0.34), 0.04, 0.96)
+					snail.vel *= 0.62
+					snail.squish = minf(snail.squish, 0.62)
+			if punished:
+				victim = "%s dumps the rail." % punished.display_name
 		RaceChaos.LiveEvent.CROWD_SQUEEZE:
 			var cluster := _biggest_cluster()
 			if cluster.size() >= 3:
@@ -869,6 +955,7 @@ func _strike_live_event() -> void:
 						continue
 					snail.squish = 0.52
 					snail.vel *= 0.88
+	return victim
 
 
 func _apply_track_hazards(delta: float) -> void:
@@ -884,9 +971,13 @@ func _apply_track_hazards(delta: float) -> void:
 				snail.groove = clampf(snail.groove + randf_range(-0.7, 1.05) * delta, 0.04, 0.96)
 				if not snail.zone_hit:
 					snail.zone_hit = true
-					snail.groove = clampf(snail.groove + randf_range(0.08, 0.20), 0.04, 0.96)
-					snail.vel *= 0.55
-					snail.begin_freeze(randf_range(0.28, 0.52))
+					var wreck := in_oil and snail.archetype == Snail.Archetype.SPRINTER
+					snail.groove = clampf(snail.groove + randf_range(0.10, 0.26 if wreck else 0.20), 0.04, 0.96)
+					snail.vel *= 0.28 if wreck else 0.55
+					snail.squish = 0.42 if wreck else minf(snail.squish, 0.7)
+					snail.begin_freeze(randf_range(0.55, 0.9) if wreck else randf_range(0.28, 0.52))
+					if wreck:
+						Game.announce("%s wrecks on the oil." % snail.display_name, true)
 		else:
 			snail.zone_hit = false
 		if card_condition == RaceChaos.Condition.KERNEL_SCATTER and snail.can_freeze() and not snail.has_trait(ChickenStock.Trait.IRON_CROP):
