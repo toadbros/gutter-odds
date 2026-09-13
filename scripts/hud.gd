@@ -196,7 +196,7 @@ func set_standings(rows: Array) -> void:
 func show_toast(text: String) -> void:
 	_toast.text = text
 	_toast.modulate.a = 1.0
-	_toast_time = 3.2
+	_toast_time = 5.8 if Game.phase == Game.Phase.RESULTS else 3.2
 
 
 func show_callout(text: String) -> void:
@@ -302,20 +302,34 @@ func open_results(payload: Dictionary) -> void:
 	_results_body.append_text("[b]%s[/b]\n" % payload.get("race_name", "The card"))
 	_results_body.append_text("[b]%s[/b] takes the ring.\n" % payload.get("winner_name", "A chicken"))
 	var fried := str(payload.get("fried_name", ""))
+	var fried_owner := str(payload.get("fried_owner", ""))
+	var fryer_line := str(payload.get("fryer_line", ""))
+	var punchline := str(payload.get("punchline", ""))
 	if not fried.is_empty():
-		_results_body.append_text("[color=#e8a028]Last place: %s is extra crispy.[/color]\n" % fried)
+		var crisp := RaceChaos.fryer_crisp_line(fried, fried_owner)
+		_results_body.append_text("[color=#e8a028]%s[/color]\n" % crisp)
+		if not fryer_line.is_empty() and fryer_line != crisp:
+			_results_body.append_text("%s\n" % fryer_line)
+		if not punchline.is_empty():
+			_results_body.append_text("[i]%s[/i]\n" % punchline)
 		if payload.get("fried_owned", false):
 			_results_body.append_text("The fryer paid %d caps for the carcass.\n" % ChickenStock.FRY_PAYOUT)
 	if int(payload.get("purse_won", 0)) > 0:
 		_results_body.append_text("Your bird took the purse: [color=#c4e08a]+%d[/color]\n" % int(payload.get("purse_won", 0)))
 	if payload.get("wing_complete", false):
 		_results_body.append_text("[color=#e8c03a]TRIPLE WING. That's the barn's whole argument.[/color]\n")
+	var payout := str(payload.get("payout_line", ""))
+	if payout.is_empty():
+		if payload.get("won", false):
+			payout = "Your slip paid %d bottlecaps." % int(payload.get("pay", 0))
+		elif int(payload.get("bet_amount", 0)) > 0:
+			payout = "Your slip is trash. The tin is heavier."
+		else:
+			payout = "You watched. That's free, and it looks like it."
 	if payload.get("won", false):
-		_results_body.append_text("Your slip paid [color=#c4e08a]%d bottlecaps[/color]." % int(payload.get("pay", 0)))
-	elif int(payload.get("bet_amount", 0)) > 0:
-		_results_body.append_text("Your slip is trash. The tin is heavier.")
+		_results_body.append_text("[color=#c4e08a]%s[/color]" % payout)
 	else:
-		_results_body.append_text("You watched. That's free, and it looks like it.")
+		_results_body.append_text(payout)
 	_results.visible = true
 	_bookie.visible = false
 	_inspect.visible = false
@@ -655,9 +669,12 @@ func _build() -> void:
 
 	_toast = _label(root, "", 20, Vector2(0, 90), INK)
 	_toast.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_toast.offset_top = 86
-	_toast.offset_bottom = 120
+	_toast.offset_left = 80
+	_toast.offset_right = -80
+	_toast.offset_top = 72
+	_toast.offset_bottom = 128
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_toast.modulate.a = 0.0
 
 	_yell_title = _label(root, "", 88, Vector2(0, 96), INK)

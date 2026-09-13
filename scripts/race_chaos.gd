@@ -74,6 +74,56 @@ static func event_callout(event: int) -> String:
 	return ""
 
 
+static func fryer_owner_line(bird: String, owner: String) -> String:
+	if bird.is_empty():
+		return ""
+	if owner.is_empty():
+		return "%s is last. Heat the oil." % bird
+	return "%s's %s is last. Heat the oil." % [owner, bird]
+
+
+static func fryer_crisp_line(bird: String, owner: String) -> String:
+	if bird.is_empty():
+		return ""
+	if owner.is_empty():
+		return "%s is extra crispy. House bird. House dinner." % bird
+	return "%s's %s is extra crispy." % [owner, bird]
+
+
+static func roast_punchline(event: int, bird: String, owner: String, arch: int) -> String:
+	if bird.is_empty() or event <= 0:
+		return ""
+	var kind := ChickenStock.archetype_name(arch)
+	var owned := not owner.is_empty()
+	var bird_who := ("%s's %s" % [owner, bird]) if owned else bird
+	var arch_who := ("%s's %s" % [owner, kind]) if owned else ("%s the %s" % [bird, kind])
+	match event:
+		LiveEvent.OIL_SLICK:
+			return "%s met the skillet." % arch_who
+		LiveEvent.HAWK:
+			return "Hawk put %s on the plate." % bird_who
+		LiveEvent.CORN_RAIN:
+			return "%s stopped for corn. The fryer did not." % bird_who
+		LiveEvent.LOOSE_DOG:
+			return "%s dumped the rail. Dinner followed." % bird_who
+		LiveEvent.FALSE_GUN:
+			return "False gun, real grease. %s is toast." % bird_who
+		LiveEvent.CROWD_SQUEEZE:
+			return "The crowd pinned %s. The oil finished it." % bird_who
+	return ""
+
+
+static func table_roast(winner: String, fryer_line: String, punch: String) -> String:
+	var bits: PackedStringArray = []
+	if not winner.is_empty():
+		bits.append("%s takes the ring." % winner)
+	if not fryer_line.is_empty():
+		bits.append(fryer_line)
+	if not punch.is_empty():
+		bits.append(punch)
+	return " ".join(bits)
+
+
 static func event_rank(event: int) -> int:
 	match event:
 		LiveEvent.HAWK, LiveEvent.CORN_RAIN:

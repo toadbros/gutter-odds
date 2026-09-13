@@ -576,6 +576,7 @@ func on_race_finished(winner_index: int, standings: Array) -> void:
 	if NetPlay.is_server():
 		NetPlay.send_results(payload)
 		NetPlay.broadcast_meet()
+	_play_results_roast(payload)
 	results_ready.emit(payload)
 	set_ui_open(true)
 
@@ -588,6 +589,7 @@ func apply_network_results(payload: Dictionary) -> void:
 	get_tree().call_group("race_director", "deactivate")
 	_settle_local_from(payload)
 	last_results = payload
+	_play_results_roast(payload)
 	results_ready.emit(payload)
 	set_ui_open(true)
 
@@ -654,6 +656,9 @@ func _settle_card(winner_index: int, standings: Array) -> Dictionary:
 	var fried_name := ""
 	var fried_owned := false
 	var fried_id := ""
+	var fried_owner_id := 0
+	var fried_owner := ""
+	var fried_arch := -1
 	var purse_won := 0
 	var wing_complete := false
 	var last_place := 0
@@ -666,24 +671,20 @@ func _settle_card(winner_index: int, standings: Array) -> Dictionary:
 	if won:
 		pay = bet_amount + int(bet_amount * winner_odds.x / maxi(winner_odds.y, 1))
 		bottlecaps += pay
-		toast.emit("The bookie hates you. +%d bottlecaps." % pay)
-	elif bet_amount > 0:
-		toast.emit("That's going in the tin. Unlucky.")
 	for row in standings:
 		if int(row.get("place", 0)) != last_place or last_place <= 1:
 			continue
 		fried_name = str(row.get("name", "A chicken"))
 		fried_id = str(row.get("chicken_id", ""))
-		fried_owned = int(row.get("owner_id", 0)) == NetPlay.local_id() and not fried_id.begins_with("npc_")
-		announce("%s is last. Heat the oil." % fried_name)
+		fried_owner_id = int(row.get("owner_id", 0))
+		fried_arch = int(row.get("archetype", -1))
+		fried_owned = fried_owner_id == NetPlay.local_id() and not fried_id.begins_with("npc_")
+		fried_owner = fried_owner_name(fried_owner_id, fried_id)
 		if fried_owned:
 			_remove_chicken(fried_id)
 			if entered_id == fried_id:
 				entered_id = ""
 			bottlecaps += ChickenStock.FRY_PAYOUT
-			toast.emit("%s is extra crispy. The fryer pays %d." % [fried_name, ChickenStock.FRY_PAYOUT])
-		else:
-			toast.emit("%s is extra crispy." % fried_name)
 		break
 	var local_bird := local_entered_bird()
 	if not local_bird.is_empty():
@@ -695,19 +696,20 @@ func _settle_card(winner_index: int, standings: Array) -> Dictionary:
 					did_win = true
 					purse_won = race_purse()
 					bottlecaps += purse_won
-					toast.emit("%s took the purse. +%d caps." % [local_bird["name"], purse_won])
 					break
 			_replace_chicken(local_id, ChickenStock.apply_race_result(local_bird, did_win, race_wing_index()))
 			var after := find_chicken(local_id)
 			if int(after.get("wing_flags", 0)) == 7:
 				wing_complete = true
 				bottlecaps += 300
-				toast.emit("Triple Wing. The barn just got a legend. +300.")
 	if bottlecaps <= 0:
 		bottlecaps = MERCY_LOAN
-		toast.emit("The bookie spots you %d. Don't get used to it." % MERCY_LOAN)
 	money_changed.emit(bottlecaps)
 	coop_changed.emit()
+	var deciding := _deciding_event()
+	var fryer_line := RaceChaos.fryer_owner_line(fried_name, fried_owner)
+	var punchline := RaceChaos.roast_punchline(deciding, fried_name, fried_owner, fried_arch)
+	var roast := RaceChaos.table_roast(winner_name, fryer_line, punchline)
 	return {
 		"winner_index": winner_index,
 		"winner_name": winner_name,
@@ -719,6 +721,13 @@ func _settle_card(winner_index: int, standings: Array) -> Dictionary:
 		"podium": podium_from(standings),
 		"fried_name": fried_name,
 		"fried_owned": fried_owned,
+		"fried_owner": fried_owner,
+		"fried_owner_id": fried_owner_id,
+		"fried_arch": fried_arch,
+		"deciding_event": deciding,
+		"fryer_line": fryer_line,
+		"punchline": punchline,
+		"roast": roast,
 		"purse_won": purse_won,
 		"wing_complete": wing_complete,
 		"race_name": race_name(),
@@ -737,14 +746,18 @@ func _settle_local_from(payload: Dictionary) -> void:
 		pay = bet_amount + int(bet_amount * winner_odds.x / maxi(winner_odds.y, 1))
 		bottlecaps += pay
 	var fried_id := ""
+	var fried_owned := false
 	var last_place := 0
+	var purse_won := 0
+	var wing_complete := false
 	for row in payload.get("standings", []):
 		last_place = maxi(last_place, int(row.get("place", 0)))
 	for row in payload.get("standings", []):
 		if int(row.get("place", 0)) != last_place or last_place <= 1:
 			continue
 		fried_id = str(row.get("chicken_id", ""))
-		if int(row.get("owner_id", 0)) == NetPlay.local_id() and not fried_id.begins_with("npc_"):
+		fried_owned = int(row.get("owner_id", 0)) == NetPlay.local_id() and not fried_id.begins_with("npc_")
+		if fried_owned:
 			_remove_chicken(fried_id)
 			if entered_id == fried_id:
 				entered_id = ""
@@ -758,10 +771,12 @@ func _settle_local_from(payload: Dictionary) -> void:
 			for row in payload.get("standings", []):
 				if str(row.get("chicken_id", "")) == local_id and int(row.get("place", 99)) == 1:
 					did_win = true
-					bottlecaps += race_purse()
+					purse_won = race_purse()
+					bottlecaps += purse_won
 					break
 			_replace_chicken(local_id, ChickenStock.apply_race_result(local_bird, did_win, race_wing_index()))
 			if int(find_chicken(local_id).get("wing_flags", 0)) == 7:
+				wing_complete = true
 				bottlecaps += 300
 	if bottlecaps <= 0:
 		bottlecaps = MERCY_LOAN
@@ -771,6 +786,92 @@ func _settle_local_from(payload: Dictionary) -> void:
 	payload["pay"] = pay
 	payload["bet_amount"] = bet_amount
 	payload["bet_index"] = bet_index
+	payload["fried_owned"] = fried_owned
+	payload["purse_won"] = purse_won
+	payload["wing_complete"] = wing_complete
+	if str(payload.get("roast", "")).is_empty() or str(payload.get("fryer_line", "")).is_empty():
+		_fill_roast_fields(payload)
+
+
+func fried_owner_name(owner_id: int, chicken_id: String) -> String:
+	if chicken_id.begins_with("npc_") or owner_id <= 0:
+		return ""
+	return NetPlay.trainer_name(owner_id)
+
+
+func _deciding_event() -> int:
+	var manager = get_tree().get_first_node_in_group("race_manager")
+	if manager:
+		return int(manager.get("last_event_id"))
+	return 0
+
+
+func _fill_roast_fields(payload: Dictionary) -> void:
+	var fried_name := str(payload.get("fried_name", ""))
+	var fried_owner := str(payload.get("fried_owner", ""))
+	var fried_arch := int(payload.get("fried_arch", -1))
+	var deciding := int(payload.get("deciding_event", 0))
+	if fried_name.is_empty() or fried_owner.is_empty() or fried_arch < 0:
+		var last_place := 0
+		for row in payload.get("standings", []):
+			last_place = maxi(last_place, int(row.get("place", 0)))
+		for row in payload.get("standings", []):
+			if int(row.get("place", 0)) != last_place or last_place <= 1:
+				continue
+			fried_name = str(row.get("name", fried_name))
+			var fried_id := str(row.get("chicken_id", ""))
+			var owner_id := int(row.get("owner_id", 0))
+			if fried_owner.is_empty():
+				fried_owner = fried_owner_name(owner_id, fried_id)
+			if fried_arch < 0:
+				fried_arch = int(row.get("archetype", fried_arch))
+			payload["fried_name"] = fried_name
+			payload["fried_owner"] = fried_owner
+			payload["fried_owner_id"] = owner_id
+			payload["fried_arch"] = fried_arch
+			break
+	var fryer_line := RaceChaos.fryer_owner_line(fried_name, fried_owner)
+	var punchline := RaceChaos.roast_punchline(deciding, fried_name, fried_owner, fried_arch)
+	payload["fryer_line"] = fryer_line
+	payload["punchline"] = punchline
+	payload["roast"] = RaceChaos.table_roast(str(payload.get("winner_name", "")), fryer_line, punchline)
+
+
+func _payout_line(payload: Dictionary) -> String:
+	if payload.get("won", false):
+		return "Your slip paid %d." % int(payload.get("pay", 0))
+	if int(payload.get("bet_amount", 0)) > 0:
+		return "Your slip is trash."
+	if payload.get("fried_owned", false):
+		return "The fryer pays %d for your carcass." % ChickenStock.FRY_PAYOUT
+	if int(payload.get("purse_won", 0)) > 0:
+		return "Your bird took the purse. +%d." % int(payload.get("purse_won", 0))
+	if payload.get("wing_complete", false):
+		return "Triple Wing. The barn just got a legend. +300."
+	return "You watched."
+
+
+func _localize_roast(roast: String, owner: String, fried_owned: bool) -> String:
+	if fried_owned and not owner.is_empty():
+		return roast.replace("%s's" % owner, "Your")
+	return roast
+
+
+func _play_results_roast(payload: Dictionary) -> void:
+	var roast := str(payload.get("roast", ""))
+	if roast.is_empty():
+		_fill_roast_fields(payload)
+		roast = str(payload.get("roast", ""))
+	var payout := _payout_line(payload)
+	payload["payout_line"] = payout
+	var local_roast := _localize_roast(roast, str(payload.get("fried_owner", "")), bool(payload.get("fried_owned", false)))
+	var beat := local_roast if payout.is_empty() else "%s %s" % [local_roast, payout]
+	payload["table_toast"] = beat
+	if not beat.is_empty():
+		toast.emit(beat)
+	var fryer := _localize_roast(str(payload.get("fryer_line", "")), str(payload.get("fried_owner", "")), bool(payload.get("fried_owned", false)))
+	if not fryer.is_empty():
+		announce(fryer, true)
 
 
 func _tick_open_window(delta: float) -> void:

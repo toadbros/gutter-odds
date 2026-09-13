@@ -36,6 +36,7 @@ var event_dur: float = 0.0
 var event_at: float = 0.0
 var events_left: int = 0
 var events_used: Array[int] = []
+var last_event_id: int = 0
 var next_event_frac: float = 0.28
 var _event_struck: bool = false
 var _dealt: Array[int] = []
@@ -57,6 +58,7 @@ func reset_night() -> void:
 	card_condition = RaceChaos.Condition.FAIR_DIRT
 	events_left = 0
 	events_used.clear()
+	last_event_id = 0
 	get_tree().call_group("stadium", "apply_card_condition", card_condition)
 	for snail in field:
 		snail.racing = false
@@ -366,6 +368,7 @@ func standings() -> Array:
 			"finished": s.finished,
 			"chicken_id": s.chicken_id,
 			"owner_id": s.owner_id,
+			"archetype": int(s.archetype),
 			"grade": s.grade,
 			"yours": s.owner_id == NetPlay.local_id() and not s.chicken_id.begins_with("npc_"),
 			"fried": s.fried,
@@ -812,6 +815,7 @@ func _roll_card_chaos() -> void:
 	event_dur = 0.0
 	event_at = 0.0
 	events_used.clear()
+	last_event_id = 0
 	events_left = RaceChaos.planned_event_count(card_condition, wing >= 0)
 	next_event_frac = RaceChaos.first_event_frac()
 	_event_struck = false
@@ -896,6 +900,7 @@ func _fire_live_event(picked: int, consume: bool) -> void:
 		next_event_frac = RaceChaos.next_event_frac(_leader_frac())
 	var victim := _strike_live_event()
 	_event_struck = true
+	last_event_id = live_event
 	var line := RaceChaos.event_callout(live_event)
 	var shown := victim if not victim.is_empty() else line
 	Game.event_announce(shown, live_event)

@@ -70,9 +70,10 @@ func interact(_player: Node3D) -> void:
 				Game.market_requested.emit()
 		"fryer":
 			var fried := str(Game.last_results.get("fried_name", ""))
+			var owner := str(Game.last_results.get("fried_owner", ""))
 			if fried.is_empty():
 				Game.toast.emit("Oil's hot. Last place is dinner.")
 			else:
-				Game.toast.emit("%s was last. Extra crispy." % fried)
+				Game.toast.emit(RaceChaos.fryer_crisp_line(fried, owner))
 		"generic":
 			Game.toast.emit(prompt)

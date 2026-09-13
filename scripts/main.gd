@@ -21,6 +21,17 @@ func _run_headless_smoke() -> void:
 			podium_bits.append("%d:%s" % [int(row.get("place", 0)), str(row.get("name", ""))])
 		if podium_bits.is_empty():
 			push_error("SMOKE: podium empty after RESULTS")
+		var roast := str(payload.get("roast", ""))
+		var fryer := str(payload.get("fryer_line", ""))
+		var toast_beat := str(payload.get("table_toast", ""))
+		if roast.is_empty() or fryer.is_empty():
+			push_error("SMOKE: roast beat missing after RESULTS")
+		if not roast.contains(str(payload.get("winner_name", "???"))):
+			push_error("SMOKE: roast missing winner")
+		if not fryer.contains(str(payload.get("fried_name", "???"))):
+			push_error("SMOKE: fryer line missing bird")
+		if not str(payload.get("fried_owner", "")).is_empty() and not fryer.contains(str(payload.get("fried_owner", ""))):
+			push_error("SMOKE: fryer line missing owner")
 		print(
 			"SMOKE: card=", cards.n,
 			" winner=", payload.get("winner_name"),
@@ -28,6 +39,10 @@ func _run_headless_smoke() -> void:
 			" won=", payload.get("won"),
 			" pay=", payload.get("pay"),
 			" fried=", payload.get("fried_name"),
+			" owner=", payload.get("fried_owner"),
+			" roast=", roast,
+			" punch=", payload.get("punchline"),
+			" toast=", toast_beat,
 			" caps=", Game.bottlecaps,
 			" phase=", Game.phase
 		)
@@ -69,9 +84,35 @@ func _run_headless_smoke() -> void:
 			Game.ring_the_bell()
 		)
 	)
+	_print_roast_copy_smoke()
 	await get_tree().process_frame
 	await get_tree().process_frame
 	Game.begin_night()
+
+
+func _print_roast_copy_smoke() -> void:
+	var punch := RaceChaos.roast_punchline(RaceChaos.LiveEvent.OIL_SLICK, "Quick Nickel", "Lance", 0)
+	print("SMOKE: punch=", punch)
+	if not punch.contains("Sprinter") or not punch.contains("skillet"):
+		push_error("SMOKE: oil sprinter punchline missing")
+	var fryer := RaceChaos.fryer_crisp_line("Quick Nickel", "Lance")
+	print("SMOKE: fryer=", fryer)
+	if not fryer.contains("Lance") or not fryer.contains("Quick Nickel"):
+		push_error("SMOKE: fryer line missing bird+owner")
+	var roast := RaceChaos.table_roast("Lady Cluck", RaceChaos.fryer_owner_line("Quick Nickel", "Lance"), punch)
+	print("SMOKE: table_roast=", roast)
+	if not roast.contains("Lady Cluck") or not roast.contains("Lance") or not roast.contains("Quick Nickel"):
+		push_error("SMOKE: table roast missing winner or fried bird+owner")
+	for i in 6:
+		var trainer := "Seat%d" % (i + 1)
+		var line := RaceChaos.fryer_crisp_line("Bird%d" % (i + 1), trainer)
+		if not line.contains(trainer):
+			push_error("SMOKE: 6p roast missing owner %s" % trainer)
+	print("SMOKE: 6p roast owners named")
+	var house := RaceChaos.fryer_crisp_line("Churchyard", "")
+	if not house.contains("Churchyard"):
+		push_error("SMOKE: barn fryer line missing bird")
+	print("SMOKE: roast copy ok")
 
 
 func _print_bet_card_smoke() -> void:
