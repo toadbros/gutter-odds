@@ -84,19 +84,19 @@ func _ground() -> void:
 
 
 func _track() -> void:
+	var surface := Game.TRACK_SURFACE_Y
 	var path := Path3D.new()
 	path.name = "TrackPath"
-	path.curve = GutterLooks.make_oval_curve(Game.TRACK_RX, Game.TRACK_RZ, 0.22)
+	path.curve = GutterLooks.make_oval_curve(Game.TRACK_RX, Game.TRACK_RZ, surface)
 	path.add_to_group("track_path")
 	add_child(path)
 	var mesh_i := MeshInstance3D.new()
-	mesh_i.mesh = _track_mesh(Game.TRACK_RX, Game.TRACK_RZ, Game.TRACK_WIDTH, 0.22)
+	mesh_i.mesh = _track_mesh(Game.TRACK_RX, Game.TRACK_RZ, Game.TRACK_WIDTH, surface - 0.05, 0.22)
 	mesh_i.material_override = GutterLooks.mat(Color("c4a060"), 0.88, 0.05)
 	add_child(mesh_i)
 	_track_body = mesh_i
 	var dirt := MeshInstance3D.new()
-	dirt.mesh = _track_mesh(Game.TRACK_RX, Game.TRACK_RZ, Game.TRACK_WIDTH * 0.72, 0.04)
-	dirt.position.y = 0.23
+	dirt.mesh = _track_mesh(Game.TRACK_RX, Game.TRACK_RZ, Game.TRACK_WIDTH * 0.72, surface, 0.05)
 	dirt.material_override = GutterLooks.mat(Color("d2b07a"), 0.92, 0.0)
 	add_child(dirt)
 	_track_dirt = dirt
@@ -543,7 +543,7 @@ func _path_length() -> float:
 func _path_point(frac: float) -> Vector3:
 	var path := get_tree().get_first_node_in_group("track_path") as Path3D
 	if path == null or path.curve == null:
-		return Vector3(cos(frac * TAU) * Game.TRACK_RX, 0.24, sin(frac * TAU) * Game.TRACK_RZ)
+		return Vector3(cos(frac * TAU) * Game.TRACK_RX, Game.TRACK_SURFACE_Y, sin(frac * TAU) * Game.TRACK_RZ)
 	var xf := path.curve.sample_baked_with_rotation(clampf(frac, 0.0, 1.0) * path.curve.get_baked_length(), true)
 	var inward := Vector3(-xf.origin.x, 0.0, -xf.origin.z)
 	if inward.length_squared() < 0.0001:
@@ -597,22 +597,22 @@ func _on_vip_changed(owned: bool) -> void:
 	_vip_gate.use_collision = not owned
 
 
-func _track_mesh(rx: float, rz: float, width: float, thickness: float) -> ArrayMesh:
+func _track_mesh(rx: float, rz: float, width: float, top_y: float, thickness: float) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var segments := 72
+	var yb := top_y - thickness
+	var yt := top_y
 	for i in segments:
 		var t0 := float(i) / float(segments)
 		var t1 := float(i + 1) / float(segments)
 		var a0 := t0 * TAU
 		var a1 := t1 * TAU
-		var p0 := Vector3(cos(a0) * rx, 0.18, sin(a0) * rz)
-		var p1 := Vector3(cos(a1) * rx, 0.18, sin(a1) * rz)
+		var p0 := Vector3(cos(a0) * rx, 0.0, sin(a0) * rz)
+		var p1 := Vector3(cos(a1) * rx, 0.0, sin(a1) * rz)
 		var n0 := Vector3(cos(a0) * rz, 0, sin(a0) * rx).normalized()
 		var n1 := Vector3(cos(a1) * rz, 0, sin(a1) * rx).normalized()
 		var hw := width * 0.5
-		var yb := 0.0
-		var yt := thickness
 		var a := p0 + n0 * hw + Vector3.UP * yt
 		var b := p1 + n1 * hw + Vector3.UP * yt
 		var c := p1 - n1 * hw + Vector3.UP * yt

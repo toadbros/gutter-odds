@@ -67,6 +67,11 @@ var _yard_target: Vector3 = Vector3.ZERO
 var _yard_speed: float = 0.0
 var _startle_cd: float = 0.0
 var _eat_at: Vector3 = Vector3.ZERO
+var _track_target: Vector3 = Vector3.ZERO
+var _track_yaw: float = 0.0
+var _have_track_target: bool = false
+var _shown_vel: float = 0.0
+var _gait_move: float = 0.0
 
 
 func _ready() -> void:
@@ -150,6 +155,7 @@ func configure(data: Dictionary, number: int, lane_offset: float) -> void:
 		if owner_id == NetPlay.local_id() and not chicken_id.begins_with("npc_"):
 			_label.text = "%s  ·  YOURS" % display_name
 	reset_pose()
+	leave_track_follow()
 	visible = true
 
 
@@ -165,6 +171,7 @@ func release_to_yard(amin: Vector3, amax: Vector3, at: Vector3) -> void:
 	in_yard = true
 	racing = false
 	fried = false
+	leave_track_follow()
 	yard_min = amin
 	yard_max = amax
 	add_to_group("yard_chicken")
@@ -228,6 +235,8 @@ func reset_pose() -> void:
 	_model.position = Vector3.ZERO
 	_model.rotation = Vector3.ZERO
 	_model.scale = Vector3.ONE
+	_gait_move = 0.0
+	_shown_vel = 0.0
 	_legs = _model.get_node_or_null("Legs")
 	if _legs:
 		for child in _legs.get_children():
@@ -243,11 +252,35 @@ func reset_pose() -> void:
 		head.rotation = Vector3.ZERO
 
 
+func leave_track_follow() -> void:
+	_have_track_target = false
+
+
+func set_track_pose(origin: Vector3, yaw: float, snap: bool = false) -> void:
+	_track_target = origin
+	_track_yaw = yaw
+	_have_track_target = true
+	if snap or global_position.distance_to(origin) > 2.4:
+		global_position = origin
+		rotation = Vector3(0.0, yaw, 0.0)
+
+
+func _follow_track(delta: float) -> void:
+	if not _have_track_target:
+		return
+	var follow := 1.0 - exp(-delta * 12.0)
+	var turn := 1.0 - exp(-delta * 10.0)
+	global_position = global_position.lerp(_track_target, follow)
+	rotation.y = lerp_angle(rotation.y, _track_yaw, turn)
+	rotation.x = 0.0
+	rotation.z = 0.0
+
+
 func tick_crawl(delta: float) -> void:
 	if freeze_lock > 0.0:
 		freeze_lock = maxf(freeze_lock - delta, 0.0)
 	if not racing or finished:
-		vel = move_toward(vel, 0.0, delta * 6.0)
+		vel = move_toward(vel, 0.0, delta * 4.5)
 		height_vel -= 8.0 * delta
 		height = maxf(height + height_vel * delta, 0.0)
 		if height <= 0.0:
@@ -279,13 +312,14 @@ func tick_crawl(delta: float) -> void:
 	match _crawl:
 		Crawl.REST:
 			_crawl_t += delta
-			vel = move_toward(vel, 0.0, delta * 7.0)
+			vel = move_toward(vel, 0.0, delta * 4.6)
 			if _crawl_t >= _rest_dur:
 				_begin_slide(frac)
 		Crawl.SLIDE:
 			_crawl_t += delta
 			var u := clampf(_crawl_t / maxf(_slide_dur, 0.05), 0.0, 1.0)
-			vel = _peak * sin(u * PI)
+			var want := _peak * sin(u * PI)
+			vel = lerpf(vel, want, 1.0 - exp(-delta * 9.0))
 			if u >= 1.0:
 				_begin_rest(frac)
 	climb_timer = maxf(climb_timer - delta, 0.0)
@@ -395,9 +429,14 @@ func _process(delta: float) -> void:
 	if _model == null:
 		return
 	if in_yard and visible and not racing and not fried:
+		leave_track_follow()
 		_tick_yard(delta)
 		return
+	if _have_track_target:
+		_follow_track(delta)
 	if not racing:
+		_gait_move = move_toward(_gait_move, 0.0, delta * 5.0)
+		_shown_vel = move_toward(_shown_vel, 0.0, delta * 5.0)
 		if Game.phase == Game.Phase.OPEN:
 			_paddock_act(delta)
 			_animate_legs(false)
@@ -407,24 +446,34 @@ func _process(delta: float) -> void:
 			_idle_on_track()
 			_animate_legs(false)
 		return
-	var moving := _crawl == Crawl.SLIDE and vel > 0.12
+	_shown_vel = move_toward(_shown_vel, vel, delta * 4.5)
+	var want_move := 1.0 if _shown_vel > 0.16 else 0.0
 	if chaos_beat == ChaosBeat.PEBBLE or freeze_left > 0.0:
-		moving = false
+		want_move = 0.0
+	_gait_move = move_toward(_gait_move, want_move, delta * 5.5)
+	var move_w := _gait_move
 	_model.scale = Vector3.ONE
-	_model.rotation.y = sin(_wag * (2.2 if moving else 1.8)) * (0.08 if moving else 0.06)
-	_model.rotation.x = clampf(height * 0.6, 0.0, 0.18) + (0.12 * sin(_wag * 14.0) if moving else 0.0)
-	_model.rotation.z = clampf((0.5 - groove) * 0.2, -0.22, 0.22)
-	var bob := (0.05 if moving else 0.012) * absf(sin(_wag * (14.0 if moving else 2.0)))
-	_model.position = Vector3(0.0, bob, 0.0)
-	_animate_legs(moving)
+	var want_yaw := sin(_wag * lerpf(1.6, 2.0, move_w)) * lerpf(0.045, 0.07, move_w)
+	var want_pitch := clampf(height * 0.45, 0.0, 0.14) + sin(_wag * 8.4) * 0.045 * move_w
+	var want_roll := clampf((0.5 - groove) * 0.14, -0.16, 0.16)
+	var ease := 1.0 - exp(-delta * 8.0)
+	_model.rotation.y = lerpf(_model.rotation.y, want_yaw, ease)
+	_model.rotation.x = lerpf(_model.rotation.x, want_pitch, ease)
+	_model.rotation.z = lerpf(_model.rotation.z, want_roll, ease)
+	var bob := lerpf(0.008, 0.03, move_w) * (0.5 - 0.5 * cos(_wag * lerpf(2.3, 8.6, move_w)))
+	_model.position.x = 0.0
+	_model.position.z = 0.0
+	_model.position.y = lerpf(_model.position.y, bob, 1.0 - exp(-delta * 14.0))
+	_animate_legs(move_w > 0.22)
 
 
 func _animate_legs(moving: bool) -> void:
 	if _legs == null:
 		_legs = _model.get_node_or_null("Legs")
+	var w := _gait_move if racing else (1.0 if moving else 0.0)
 	if _legs:
-		var gait := _wag * (16.0 if moving else 2.4)
-		var amp := 0.7 if moving else 0.12
+		var gait := _wag * lerpf(2.1, 9.2, w)
+		var amp := lerpf(0.10, 0.48, w)
 		for i in _legs.get_child_count():
 			var leg := _legs.get_child(i) as Node3D
 			if leg == null:
@@ -432,23 +481,24 @@ func _animate_legs(moving: bool) -> void:
 			leg.rotation.x = sin(gait + float(i) * PI) * amp
 	var wings := _model.get_node_or_null("Wings")
 	if wings:
-		var flap := _wag * (18.0 if moving or height > 0.05 else 3.0)
-		var wing_amp := 0.7 if moving or height > 0.05 else 0.12
+		var flapping := w > 0.2 or height > 0.05
+		var flap := _wag * (10.5 if flapping else 2.6)
+		var wing_amp := 0.42 if flapping else 0.10
 		for i in wings.get_child_count():
 			var wing := wings.get_child(i) as Node3D
 			if wing == null:
 				continue
 			var side := -1.0 if i == 0 else 1.0
-			wing.rotation.z = side * (0.15 + sin(flap) * wing_amp)
+			wing.rotation.z = side * (0.14 + sin(flap) * wing_amp)
 	var head := _model.get_node_or_null("Head") as Node3D
 	if head:
 		var peck := 0.0
-		if not moving:
-			peck = maxf(sin(_wag * 5.5), 0.0) * 0.55
+		if w < 0.25:
+			peck = maxf(sin(_wag * 4.2), 0.0) * 0.42
 		head.rotation.x = peck
 	var tail := _model.get_node_or_null("Tail") as Node3D
 	if tail:
-		tail.rotation.y = sin(_wag * (8.0 if moving else 1.6)) * (0.2 if moving else 0.08)
+		tail.rotation.y = sin(_wag * lerpf(1.5, 6.4, w)) * lerpf(0.07, 0.16, w)
 
 
 func race_tag() -> String:
@@ -560,7 +610,6 @@ func _begin_rest(frac: float) -> void:
 	_crawl = Crawl.REST
 	_crawl_t = 0.0
 	_rest_dur = _rest_for(frac)
-	vel = 0.0
 
 
 func _peak_for(frac: float) -> float:

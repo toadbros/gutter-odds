@@ -122,7 +122,7 @@ func move_to_gates() -> void:
 		snail.racing = false
 		snail.lap_length = track_length
 		snail.reset_pose()
-		_place_on_track(snail)
+		_place_on_track(snail, true)
 
 
 func start_race() -> void:
@@ -252,7 +252,7 @@ func apply_snapshot(data: Variant) -> void:
 		snail.finish_time = float(row.get("finish_time", snail.finish_time))
 		if bool(row.get("fried", false)) and not snail.fried:
 			snail.make_fried()
-		_place_on_track(snail)
+		_place_on_track(snail, false)
 	get_tree().call_group("hud", "set_standings", standings())
 
 
@@ -620,6 +620,7 @@ func _odds_for(form: float, arch: int, traits: Array = []) -> Vector2i:
 
 
 func _place_in_pen(snail: Snail, index: int) -> void:
+	snail.leave_track_follow()
 	var marker := get_tree().get_first_node_in_group("pen_%d" % index) as Node3D
 	if marker == null:
 		snail.global_position = Vector3(-22.0, 0.12, float(index - 1) * 2.4)
@@ -628,7 +629,7 @@ func _place_in_pen(snail: Snail, index: int) -> void:
 	snail.distance = 0.0
 
 
-func _place_on_track(snail: Snail) -> void:
+func _place_on_track(snail: Snail, snap: bool = false) -> void:
 	var path := _path()
 	if path == null or path.curve == null:
 		return
@@ -641,8 +642,22 @@ func _place_on_track(snail: Snail) -> void:
 	else:
 		inward = inward.normalized()
 	var usable := Game.TRACK_WIDTH * 0.78
-	var origin := xf.origin + inward * (0.5 - snail.groove) * usable + Vector3.UP * snail.height
-	snail.global_transform = Transform3D(xf.basis.orthonormalized(), origin)
+	var origin := xf.origin + inward * (0.5 - snail.groove) * usable
+	origin.y = xf.origin.y + snail.height + Game.TRACK_STAND_LIFT
+	var ahead := path.curve.sample_baked(clampf(d + 0.22, 0.0, length))
+	var tangent := ahead - xf.origin
+	tangent.y = 0.0
+	if tangent.length_squared() < 0.00015:
+		var behind := xf.origin - path.curve.sample_baked(clampf(d - 0.22, 0.0, length))
+		behind.y = 0.0
+		tangent = behind
+	if tangent.length_squared() < 0.00015:
+		tangent = -xf.basis.z
+		tangent.y = 0.0
+	if tangent.length_squared() > 0.0001:
+		tangent = tangent.normalized()
+	var yaw := atan2(-tangent.x, -tangent.z)
+	snail.set_track_pose(origin, yaw, snap)
 
 
 func _jostle(delta: float) -> void:

@@ -27,6 +27,10 @@ const FIELD_SIZE := 6
 const TRACK_RX := 15.0
 const TRACK_RZ := 10.0
 const TRACK_WIDTH := 4.2
+# Dirt walking surface. Path Y used to sit at 0.22 while the oval mesh
+# topped out at ~0.45, which sank the field "underwater."
+const TRACK_SURFACE_Y := 0.45
+const TRACK_STAND_LIFT := 0.02
 const COUNT_BEAT := 1.15
 const OPEN_WINDOW := 32.0
 const RESULTS_BEAT := 7.0
@@ -710,6 +714,7 @@ func _settle_card(winner_index: int, standings: Array) -> Dictionary:
 		"bet_amount": bet_amount,
 		"bet_index": bet_index,
 		"standings": standings,
+		"podium": podium_from(standings),
 		"fried_name": fried_name,
 		"fried_owned": fried_owned,
 		"purse_won": purse_won,
@@ -796,6 +801,24 @@ func open_secs_left() -> int:
 
 func results_secs_left() -> int:
 	return maxi(int(ceil(results_clock)), 0)
+
+
+func podium_from(standings: Array = []) -> Array:
+	var rows: Array = standings
+	if rows.is_empty():
+		rows = last_results.get("standings", [])
+	var by_place := {}
+	for row in rows:
+		if not row is Dictionary:
+			continue
+		var place := int(row.get("place", 0))
+		if place >= 1 and place <= 3 and not by_place.has(place):
+			by_place[place] = row
+	var out: Array = []
+	for place in [1, 2, 3]:
+		if by_place.has(place):
+			out.append(by_place[place])
+	return out
 
 
 func _start_race() -> void:
