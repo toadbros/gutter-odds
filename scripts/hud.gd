@@ -840,10 +840,8 @@ func _fill_lobby() -> void:
 		_ready_btn.text = "Unready" if NetPlay.is_ready() else "Ready up"
 	if _start_btn:
 		_start_btn.visible = NetPlay.is_server()
-		if NetPlay.everyone_ready():
-			_start_btn.text = "Start the meet"
-		else:
-			_start_btn.text = "Start anyway"
+		_start_btn.text = "Start the meet"
+		_start_btn.disabled = not NetPlay.everyone_ready()
 
 
 func _build_pause(root: Control) -> Control:

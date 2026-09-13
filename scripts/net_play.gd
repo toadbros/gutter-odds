@@ -169,6 +169,9 @@ func request_start() -> void:
 		return
 	if Game.phase != Game.Phase.LOBBY:
 		return
+	if not everyone_ready():
+		Game.toast.emit("Everyone needs to ready up first.")
+		return
 	rpc_start_meet.rpc()
 	_spawn_all_puppets()
 	Game.begin_night()
@@ -231,7 +234,14 @@ func broadcast_field(payload: Array) -> void:
 func rpc_hello(player_name: String) -> void:
 	if not multiplayer.is_server():
 		return
-	_seat(multiplayer.get_remote_sender_id(), sanitize_name(player_name), false)
+	var pid := multiplayer.get_remote_sender_id()
+	if Game.phase != Game.Phase.LOBBY:
+		_refuse_peer(pid, "Table's mid-meet. Join when they're back in lobby.")
+		return
+	if not roster.has(pid) and seat_count() >= MAX_PESTS:
+		_refuse_peer(pid, "Table's full. Six trainers max.")
+		return
+	_seat(pid, sanitize_name(player_name), false)
 	_broadcast_roster()
 
 
@@ -420,18 +430,16 @@ func _broadcast_roster() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	if is_server():
+		if Game.phase != Game.Phase.LOBBY:
+			_refuse_peer(id, "Table's mid-meet. Join when they're back in lobby.")
+			return
+		if seat_count() >= MAX_PESTS:
+			_refuse_peer(id, "Table's full. Six trainers max.")
+			return
 		if not roster.has(id):
 			_seat(id, "Trainer", false)
 		_broadcast_roster()
-		if Game.phase == Game.Phase.LOBBY:
-			_set_status("%s sat down. %d at the table." % [trainer_name(id), seat_count()])
-		else:
-			rpc_id(id, "rpc_meet", Game.pack_meet())
-			get_tree().call_group("race_manager", "broadcast_now")
-			_sync_entries()
-			rpc_id(id, "rpc_late_join")
-			_spawn_puppet(id)
-			_set_status("%s showed up mid-meet." % trainer_name(id))
+		_set_status("%s sat down. %d at the table." % [trainer_name(id), seat_count()])
 	peers_changed.emit()
 	lobby_changed.emit()
 
@@ -495,6 +503,31 @@ func _spawn_puppet(peer_id: int) -> void:
 	puppet.name = "Trainer_%d" % peer_id
 	world.add_child(puppet)
 	puppet.setup_remote(peer_id, trainer_name(peer_id))
+
+
+func _refuse_peer(peer_id: int, reason: String) -> void:
+	if not is_server() or peer_id <= 0:
+		return
+	rpc_id(peer_id, "rpc_refused", reason)
+	Game.toast.emit(reason)
+	_set_status(reason)
+	# Defer disconnect so the refuse RPC can flush.
+	call_deferred("_disconnect_peer_now", peer_id)
+
+
+func _disconnect_peer_now(peer_id: int) -> void:
+	var peer := multiplayer.multiplayer_peer
+	if peer != null:
+		peer.disconnect_peer(peer_id)
+
+
+@rpc("authority", "call_remote", "reliable")
+func rpc_refused(reason: String) -> void:
+	_closing = true
+	Game.toast.emit(reason)
+	close()
+	if Game.phase != Game.Phase.MENU:
+		Game.return_to_menu()
 
 
 func _set_status(text: String) -> void:
