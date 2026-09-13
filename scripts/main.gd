@@ -103,8 +103,10 @@ func _print_bet_card_smoke() -> void:
 		seen[arch] = true
 	var hud := get_tree().get_first_node_in_group("hud")
 	if hud and hud.has_method("bet_card_rows"):
-		var rows: PackedStringArray = hud.bet_card_rows()
-		var field_ui := hud.field_card_count() if hud.has_method("field_card_count") else 0
+		var rows: PackedStringArray = hud.call("bet_card_rows")
+		var field_ui := 0
+		if hud.has_method("field_card_count"):
+			field_ui = int(hud.call("field_card_count"))
 		print("SMOKE: hud_cards=", rows.size(), " field_ui=", field_ui)
 		if rows.size() != Game.FIELD_SIZE:
 			push_error("SMOKE: HUD bet cards %d want %d" % [rows.size(), Game.FIELD_SIZE])
@@ -113,10 +115,10 @@ func _print_bet_card_smoke() -> void:
 		for row in rows:
 			print("SMOKE: hud_row=", row)
 		if hud.has_method("open_bookie"):
-			hud.open_bookie()
+			hud.call("open_bookie")
 			print("SMOKE: bookie opened with ", rows.size(), " readable cards")
 		if hud.has_method("close_panels"):
-			hud.close_panels()
+			hud.call("close_panels")
 	print("SMOKE: bet cards readable. types=", seen.keys())
 
 
