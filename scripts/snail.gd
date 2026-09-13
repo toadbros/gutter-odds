@@ -406,17 +406,32 @@ func _process(delta: float) -> void:
 		else:
 			_idle_on_track()
 			_animate_legs(false)
+		if _label and not fried and _label.text.contains("\n"):
+			_label.text = display_name
+			_label.modulate = Color("f0e6d0")
+			_label.font_size = 22
 		return
 	var moving := _crawl == Crawl.SLIDE and vel > 0.12
 	if chaos_beat == ChaosBeat.PEBBLE or freeze_left > 0.0:
 		moving = false
-	_model.scale = Vector3.ONE
+	var flatten := 1.0
+	if squish < 0.85:
+		flatten = clampf(squish, 0.34, 1.0)
+	if chaos_tag == "SPOOKED":
+		flatten = minf(flatten, 0.42)
+	_model.scale = Vector3(1.0 / maxf(flatten, 0.34), flatten, 1.15 / maxf(flatten, 0.5))
 	_model.rotation.y = sin(_wag * (2.2 if moving else 1.8)) * (0.08 if moving else 0.06)
 	_model.rotation.x = clampf(height * 0.6, 0.0, 0.18) + (0.12 * sin(_wag * 14.0) if moving else 0.0)
-	_model.rotation.z = clampf((0.5 - groove) * 0.2, -0.22, 0.22)
+	if chaos_tag == "GREASED":
+		_model.rotation.z = sin(_wag * 11.0) * 0.55
+	else:
+		_model.rotation.z = clampf((0.5 - groove) * 0.2, -0.22, 0.22)
 	var bob := (0.05 if moving else 0.012) * absf(sin(_wag * (14.0 if moving else 2.0)))
+	if chaos_tag == "SPOOKED":
+		bob = 0.0
 	_model.position = Vector3(0.0, bob, 0.0)
 	_animate_legs(moving)
+	_refresh_chaos_nametag()
 
 
 func _animate_legs(moving: bool) -> void:
@@ -443,12 +458,38 @@ func _animate_legs(moving: bool) -> void:
 	var head := _model.get_node_or_null("Head") as Node3D
 	if head:
 		var peck := 0.0
-		if not moving:
+		if chaos_tag == "PECKING" or freeze_left > 0.0:
+			peck = 0.45 + absf(sin(_wag * 14.0)) * 0.85
+		elif not moving:
 			peck = maxf(sin(_wag * 5.5), 0.0) * 0.55
 		head.rotation.x = peck
 	var tail := _model.get_node_or_null("Tail") as Node3D
 	if tail:
 		tail.rotation.y = sin(_wag * (8.0 if moving else 1.6)) * (0.2 if moving else 0.08)
+
+
+func _refresh_chaos_nametag() -> void:
+	if _label == null or fried or not racing:
+		return
+	var tag := race_tag()
+	if tag.is_empty() or tag == "IN":
+		_label.text = display_name
+		_label.modulate = Color("f0e6d0")
+		_label.font_size = 22
+		return
+	_label.text = "%s\n%s" % [display_name, tag]
+	_label.font_size = 26
+	match tag:
+		"PECKING":
+			_label.modulate = Color("e8c03a")
+		"GREASED":
+			_label.modulate = Color("8a6a28")
+		"SPOOKED":
+			_label.modulate = Color("e07070")
+		"PINNED":
+			_label.modulate = Color("d08090")
+		_:
+			_label.modulate = Color("f0e6d0")
 
 
 func race_tag() -> String:

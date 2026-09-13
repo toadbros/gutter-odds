@@ -8,6 +8,8 @@ const DARK := Color(0.08, 0.05, 0.04, 0.94)
 var _prompt: Label
 var _toast: Label
 var _callout: Label
+var _yell_title: Label
+var _yell_tween: Tween
 var _caps: Label
 var _phase: Label
 var _bet_slip: Label
@@ -112,6 +114,9 @@ func _process(delta: float) -> void:
 		_callout_time -= delta
 		if _callout_time <= 0.0:
 			_callout.modulate.a = 0.0
+			if _yell_title:
+				_yell_title.modulate.a = 0.0
+				_yell_title.text = ""
 	if _flash:
 		_flash.color.a = move_toward(_flash.color.a, 0.0, delta * 2.6)
 	if _go_linger > 0.0:
@@ -193,15 +198,44 @@ func show_toast(text: String) -> void:
 
 
 func show_callout(text: String) -> void:
+	if _yell_title and _yell_title.modulate.a > 0.05 and not _yell_title.text.is_empty():
+		return
+	if _yell_title:
+		_yell_title.modulate.a = 0.0
+		_yell_title.text = ""
+	_callout.add_theme_font_size_override("font_size", 26)
+	_callout.add_theme_color_override("font_color", BRASS)
 	_callout.text = text
 	_callout.modulate.a = 1.0
 	_callout_time = 2.6
 
 
-func show_event_callout(text: String) -> void:
+func show_event_callout(text: String, event_id: int = 0) -> void:
+	var title := RaceChaos.event_title(event_id)
+	if title.is_empty():
+		title = RaceChaos.condition_name(Game.card_condition()).to_upper()
+	var rank := RaceChaos.event_rank(event_id)
+	var size := 52
+	if event_id > 0:
+		size = 86 if rank <= 1 else (70 if rank == 2 else 58)
+	if _yell_title:
+		_yell_title.text = title
+		_yell_title.modulate = Color.WHITE
+		_yell_title.add_theme_font_size_override("font_size", size)
+		_yell_title.add_theme_color_override("font_color", RaceChaos.event_flash(event_id).lightened(0.45))
+		_punch_yell()
 	_callout.text = text
+	_callout.add_theme_font_size_override("font_size", 30 if event_id > 0 else 22)
+	_callout.add_theme_color_override("font_color", INK)
 	_callout.modulate.a = 1.0
-	_callout_time = 3.5
+	_callout_time = RaceChaos.event_yell_secs(event_id) if event_id > 0 else 4.0
+	if _flash:
+		var flash := RaceChaos.event_flash(event_id)
+		var peak := 0.52 if rank <= 1 else (0.36 if rank == 2 else 0.26)
+		if event_id <= 0:
+			peak = 0.22
+		_flash.color = Color(flash.r, flash.g, flash.b, peak)
+	_play_chaos_sting(event_id)
 
 
 func open_bookie() -> void:
@@ -347,6 +381,8 @@ func _on_phase(phase: Game.Phase) -> void:
 		Game.Phase.RACE:
 			_phase.text = "LIVE · %s  ·  %s" % [Game.race_name(), RaceChaos.condition_name(Game.card_condition()).to_upper()]
 			_help.text = "C race cameras / walk the rail  ·  VIP: hold RMB for binoculars"
+			if OS.is_debug_build():
+				_help.text += "  ·  1 Hawk  2 Corn  3 Oil  4 Dog  5 Gun  6 Crowd"
 			set_camera_mode(true)
 		Game.Phase.RESULTS:
 			_phase.text = "PHOTO FINISH"
@@ -354,6 +390,9 @@ func _on_phase(phase: Game.Phase) -> void:
 			if _callout:
 				_callout.modulate.a = 0.0
 				_callout_time = 0.0
+			if _yell_title:
+				_yell_title.modulate.a = 0.0
+				_yell_title.text = ""
 	_refresh_loop_clocks()
 	_refresh_meet()
 
@@ -541,12 +580,33 @@ func _build() -> void:
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.modulate.a = 0.0
 
-	_callout = _label(root, "", 26, Vector2(0, 122), BRASS)
+	_yell_title = _label(root, "", 88, Vector2(0, 96), INK)
+	_yell_title.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_yell_title.offset_left = 80
+	_yell_title.offset_right = -80
+	_yell_title.offset_top = 88
+	_yell_title.offset_bottom = 188
+	_yell_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_yell_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_yell_title.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_yell_title.add_theme_color_override("font_outline_color", Color(0.06, 0.03, 0.02, 0.94))
+	_yell_title.add_theme_constant_override("outline_size", 16)
+	_yell_title.pivot_offset = Vector2(720, 50)
+	_yell_title.modulate.a = 0.0
+	_yell_title.z_index = 6
+
+	_callout = _label(root, "", 26, Vector2(0, 186), BRASS)
 	_callout.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_callout.offset_top = 118
-	_callout.offset_bottom = 156
+	_callout.offset_left = 80
+	_callout.offset_right = -80
+	_callout.offset_top = 186
+	_callout.offset_bottom = 236
 	_callout.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_callout.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_callout.add_theme_color_override("font_outline_color", Color(0.06, 0.03, 0.02, 0.9))
+	_callout.add_theme_constant_override("outline_size", 8)
 	_callout.modulate.a = 0.0
+	_callout.z_index = 6
 
 	_flash = ColorRect.new()
 	_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1470,6 +1530,57 @@ func _fill_market() -> void:
 				_fill_market()
 		)
 		_market_list.add_child(bird_btn)
+
+
+func _punch_yell() -> void:
+	if _yell_title == null:
+		return
+	_yell_title.pivot_offset = _yell_title.size * 0.5
+	_yell_title.scale = Vector2(1.55, 1.55)
+	if _yell_tween:
+		_yell_tween.kill()
+	_yell_tween = create_tween()
+	_yell_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_yell_tween.tween_property(_yell_title, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _play_chaos_sting(event_id: int) -> void:
+	if _bang == null:
+		return
+	if event_id == RaceChaos.LiveEvent.FALSE_GUN:
+		_play_gun()
+		return
+	var rate := 22050
+	var nframes := int(rate * (0.34 if event_id > 0 else 0.18))
+	var samples := PackedFloat32Array()
+	samples.resize(nframes)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 40 + event_id
+	for i in nframes:
+		var t := float(i) / float(rate)
+		var s := 0.0
+		match event_id:
+			RaceChaos.LiveEvent.HAWK:
+				s = sin(TAU * (980.0 - t * 420.0) * t) * exp(-t * 6.5) * 0.72
+				s += sin(TAU * 1480.0 * t) * exp(-t * 14.0) * 0.28
+			RaceChaos.LiveEvent.CORN_RAIN:
+				s = (rng.randf() * 2.0 - 1.0) * exp(-fmod(t * 18.0, 1.0) * 8.0) * 0.55
+				s += sin(TAU * 240.0 * t) * exp(-t * 5.0) * 0.22
+			RaceChaos.LiveEvent.OIL_SLICK:
+				s = sin(TAU * 62.0 * t) * exp(-t * 7.0) * 0.7
+				s += (rng.randf() * 2.0 - 1.0) * exp(-t * 10.0) * 0.28
+			RaceChaos.LiveEvent.LOOSE_DOG:
+				s = sin(TAU * (220.0 + t * 80.0) * t) * exp(-t * 9.0) * 0.7
+				s += sin(TAU * 90.0 * t) * exp(-t * 6.0) * 0.35
+			RaceChaos.LiveEvent.CROWD_SQUEEZE:
+				s = (rng.randf() * 2.0 - 1.0) * exp(-t * 4.2) * 0.4
+				s += sin(TAU * 48.0 * t) * exp(-t * 3.4) * 0.55
+			_:
+				s = sin(TAU * 420.0 * t) * exp(-t * 10.0) * 0.45
+		samples[i] = clampf(s, -1.0, 1.0)
+	_bang.stream = _pcm16(samples, rate)
+	_bang.volume_db = -4.0
+	_bang.play()
 
 
 func _punch_count(from_scale: float) -> void:

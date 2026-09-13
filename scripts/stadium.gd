@@ -11,6 +11,15 @@ var _sun: DirectionalLight3D
 var _card_fx: Node3D
 var _live_fx: Node3D
 var _painted_condition: int = -1
+var _live_event: int = RaceChaos.LiveEvent.NONE
+var _live_at: Vector3 = Vector3.ZERO
+var _live_t: float = 0.0
+var _condition_sign: Label3D
+var _hawk: Node3D
+var _dog: Node3D
+var _hawk_shadow: Node3D
+var _corn_mesh: BoxMesh
+var _corn_mat: StandardMaterial3D
 
 func _ready() -> void:
 	add_to_group("stadium")
@@ -115,6 +124,8 @@ func _infield() -> void:
 	cap.use_collision = true
 	_cyl(Vector3(0, 0.18, 0), 7.6, 0.08, GutterLooks.mat(Color("6b9a42"), 0.88), 28)
 	_label("THE OVAL", Vector3(0, 0.4, 0), 64, Color("1a3a18"))
+	_condition_sign = _label("FAIR DIRT", Vector3(0, 2.72, 0), 56, Color("f0e6d0"))
+	_condition_sign.name = "ConditionSign"
 	var board := Label3D.new()
 	board.name = "ScheduleBoard"
 	board.add_to_group("schedule_board")
@@ -410,6 +421,7 @@ func _refresh_schedule() -> void:
 
 
 func apply_card_condition(condition: int) -> void:
+	_paint_condition_sign(condition)
 	if _painted_condition == condition and _card_fx != null and _card_fx.get_child_count() > 0:
 		_paint_sky(condition)
 		return
@@ -421,37 +433,71 @@ func apply_card_condition(condition: int) -> void:
 	_paint_sky(condition)
 	_clear_fx(_card_fx)
 	if condition == RaceChaos.Condition.GREASE_DRIP:
-		_spawn_slick(_card_fx, _path_point(RaceChaos.GREASE_FRAC), Color("3a2a14"))
+		_spawn_slick(_card_fx, _path_point(RaceChaos.GREASE_FRAC), Color("1a1208"), 2.4)
+		_spawn_slick(_card_fx, _path_point(RaceChaos.GREASE_FRAC + 0.04), Color("2a1a0c"), 1.7)
 	elif condition == RaceChaos.Condition.KERNEL_SCATTER:
-		for i in 18:
-			var frac := 0.08 + float(i) / 18.0 * 0.84
-			_spawn_kernels(_card_fx, _path_point(frac), 5)
+		for i in 24:
+			var frac := 0.04 + float(i) / 24.0 * 0.92
+			_spawn_kernels(_card_fx, _path_point(frac), 8, 0.14)
+	elif condition == RaceChaos.Condition.DUST_BOWL:
+		for i in 10:
+			_spawn_dust(_card_fx, _path_point(float(i) / 10.0), Color("e8d090"))
 
 
 func show_live_event(event: int, at_distance: float) -> void:
 	_clear_fx(_live_fx)
+	_hawk = null
+	_dog = null
+	_hawk_shadow = null
+	_live_event = event
+	_live_t = 0.0
 	var length := _path_length()
 	var frac := clampf(at_distance / maxf(length, 0.001), 0.0, 1.0)
+	_live_at = _path_point(frac)
 	match event:
 		RaceChaos.LiveEvent.OIL_SLICK:
-			_spawn_slick(_live_fx, _path_point(frac), Color("2a2210"))
+			_spawn_slick(_live_fx, _live_at, Color("14100a"), 2.8)
+			_spawn_slick(_live_fx, _path_point(clampf(frac + 0.035, 0.05, 0.95)), Color("22180c"), 2.1)
+			_spawn_slick(_live_fx, _path_point(clampf(frac - 0.03, 0.05, 0.95)), Color("1a1408"), 1.8)
+			_spawn_event_light(_live_at + Vector3(0, 1.4, 0), Color("4a3a18"), 2.4, 10.0)
 		RaceChaos.LiveEvent.CORN_RAIN:
-			for i in 10:
-				_spawn_kernels(_live_fx, _path_point(clampf(frac + float(i - 5) * 0.03, 0.05, 0.95)), 7)
+			_spawn_corn_rain(_live_at, frac)
+			_spawn_event_light(_live_at + Vector3(0, 3.4, 0), Color("e8c03a"), 4.2, 16.0)
 		RaceChaos.LiveEvent.HAWK:
 			_paint_sky(RaceChaos.Condition.STORM_COMING)
+			_hawk = _spawn_hawk(_live_at)
+			_hawk_shadow = _spawn_hawk_shadow(_live_at)
+			_spawn_event_light(_live_at + Vector3(0, 5.0, 0), Color("8a2030"), 2.8, 14.0)
 		RaceChaos.LiveEvent.LOOSE_DOG:
-			var dog := CSGBox3D.new()
-			dog.size = Vector3(0.55, 0.32, 0.9)
-			dog.position = Vector3(2.2, 0.28, 1.4)
-			dog.material = GutterLooks.mat(Color("5a3a22"), 0.9)
-			dog.use_collision = false
-			_live_fx.add_child(dog)
+			_dog = _spawn_dog(Vector3(6.4, 0.28, 0.0))
+			_spawn_event_light(Vector3(0, 2.2, 0), Color("8a5a28"), 2.2, 12.0)
+		RaceChaos.LiveEvent.FALSE_GUN:
+			_spawn_gun_puff(Vector3(-10.0, 1.6, 16.4))
+		RaceChaos.LiveEvent.CROWD_SQUEEZE:
+			_spawn_crowd_lean()
 
 
 func clear_live_event() -> void:
+	_live_event = RaceChaos.LiveEvent.NONE
+	_live_t = 0.0
+	_hawk = null
+	_dog = null
+	_hawk_shadow = null
 	_clear_fx(_live_fx)
 	_paint_sky(_painted_condition if _painted_condition >= 0 else RaceChaos.Condition.FAIR_DIRT)
+
+
+func _process(delta: float) -> void:
+	if _live_event == RaceChaos.LiveEvent.NONE or _live_fx == null:
+		return
+	_live_t += delta
+	match _live_event:
+		RaceChaos.LiveEvent.CORN_RAIN:
+			_tick_corn_rain(delta)
+		RaceChaos.LiveEvent.HAWK:
+			_tick_hawk()
+		RaceChaos.LiveEvent.LOOSE_DOG:
+			_tick_dog(delta)
 
 
 func _paint_sky(condition: int) -> void:
@@ -480,6 +526,26 @@ func _paint_sky(condition: int) -> void:
 			if _sun:
 				_sun.light_energy = 1.35
 				_sun.light_color = Color("ffe8b8")
+		RaceChaos.Condition.KERNEL_SCATTER:
+			if sky_mat:
+				sky_mat.sky_top_color = Color("5aa8e0")
+				sky_mat.sky_horizon_color = Color("f0d888")
+				sky_mat.ground_horizon_color = Color("d4b048")
+			env.fog_light_color = Color("f0dc90")
+			env.fog_density = 0.0024
+			if _sun:
+				_sun.light_energy = 1.65
+				_sun.light_color = Color("ffe08a")
+		RaceChaos.Condition.GREASE_DRIP:
+			if sky_mat:
+				sky_mat.sky_top_color = Color("3a6a88")
+				sky_mat.sky_horizon_color = Color("c4b080")
+				sky_mat.ground_horizon_color = Color("6a5230")
+			env.fog_light_color = Color("b8a070")
+			env.fog_density = 0.0028
+			if _sun:
+				_sun.light_energy = 1.05
+				_sun.light_color = Color("e0c890")
 		_:
 			if sky_mat:
 				sky_mat.sky_top_color = Color("4a9ee8")
@@ -492,38 +558,228 @@ func _paint_sky(condition: int) -> void:
 				_sun.light_color = Color("fff1d2")
 
 
-func _spawn_slick(parent: Node3D, at: Vector3, color: Color) -> void:
+func _paint_condition_sign(condition: int) -> void:
+	if _condition_sign == null:
+		return
+	_condition_sign.text = RaceChaos.condition_name(condition).to_upper()
+	_condition_sign.modulate = RaceChaos.condition_banner_color(condition)
+	_condition_sign.outline_modulate = Color("1a120e")
+	_condition_sign.font_size = 62
+
+
+func _spawn_slick(parent: Node3D, at: Vector3, color: Color, radius: float = 1.15) -> void:
 	if parent == null:
 		return
 	var slick := CSGCylinder3D.new()
-	slick.radius = 1.15
-	slick.height = 0.05
-	slick.sides = 10
-	slick.position = Vector3(at.x, 0.26, at.z)
-	slick.material = GutterLooks.mat(color, 0.25, 0.35)
+	slick.radius = radius
+	slick.height = 0.07
+	slick.sides = 12
+	slick.position = Vector3(at.x, 0.27, at.z)
+	slick.material = GutterLooks.mat(color, 0.08, 0.92, Color("6a5a28"), 1.4)
 	slick.use_collision = false
 	parent.add_child(slick)
 	var smear := CSGBox3D.new()
-	smear.size = Vector3(2.4, 0.03, 0.7)
-	smear.position = Vector3(at.x, 0.255, at.z)
+	smear.size = Vector3(radius * 2.2, 0.04, radius * 0.7)
+	smear.position = Vector3(at.x, 0.268, at.z)
 	smear.rotation.y = atan2(at.x, at.z)
-	smear.material = GutterLooks.mat(color.lightened(0.08), 0.3, 0.25)
+	smear.material = GutterLooks.mat(color.lightened(0.08), 0.16, 0.7, color.lightened(0.15), 0.4)
 	smear.use_collision = false
 	parent.add_child(smear)
+	var rim := CSGCylinder3D.new()
+	rim.radius = radius + 0.22
+	rim.height = 0.03
+	rim.sides = 14
+	rim.position = Vector3(at.x, 0.275, at.z)
+	rim.material = GutterLooks.mat(Color("e8c03a"), 0.35, 0.15, Color("f0d060"), 1.6)
+	rim.use_collision = false
+	parent.add_child(rim)
 
 
-func _spawn_kernels(parent: Node3D, at: Vector3, count: int) -> void:
+func _spawn_kernels(parent: Node3D, at: Vector3, count: int, size: float = 0.05) -> void:
 	if parent == null:
 		return
 	for i in count:
 		var kernel := CSGBox3D.new()
-		kernel.size = Vector3(0.05, 0.025, 0.035)
-		kernel.position = at + Vector3(randf_range(-0.55, 0.55), 0.04, randf_range(-0.55, 0.55))
-		kernel.position.y = 0.26
+		kernel.size = Vector3(size, size * 0.55, size * 0.72)
+		kernel.position = at + Vector3(randf_range(-0.85, 0.85), 0.04, randf_range(-0.85, 0.85))
+		kernel.position.y = 0.28
 		kernel.rotation.y = randf() * TAU
-		kernel.material = GutterLooks.mat(Color("e8c03a"), 0.55)
+		kernel.material = GutterLooks.mat(Color("e8c03a"), 0.4, 0.0, Color("f0d060"), 1.1)
 		kernel.use_collision = false
 		parent.add_child(kernel)
+
+
+func _spawn_dust(parent: Node3D, at: Vector3, color: Color) -> void:
+	if parent == null:
+		return
+	var puff := CSGCylinder3D.new()
+	puff.radius = 1.35
+	puff.height = 0.9
+	puff.sides = 8
+	puff.position = Vector3(at.x, 0.7, at.z)
+	puff.material = GutterLooks.mat(color.lightened(0.08), 0.95)
+	puff.use_collision = false
+	parent.add_child(puff)
+
+
+func _spawn_event_light(at: Vector3, color: Color, energy: float, radius: float) -> void:
+	if _live_fx == null:
+		return
+	var light := OmniLight3D.new()
+	light.light_color = color
+	light.light_energy = energy
+	light.omni_range = radius
+	light.position = at
+	light.shadow_enabled = false
+	_live_fx.add_child(light)
+
+
+func _ensure_corn_assets() -> void:
+	if _corn_mesh == null:
+		_corn_mesh = BoxMesh.new()
+		_corn_mesh.size = Vector3(0.22, 0.13, 0.16)
+	if _corn_mat == null:
+		_corn_mat = GutterLooks.mat(Color("e8c03a"), 0.38, 0.0, Color("f4d060"), 1.8)
+
+
+func _spawn_corn_rain(at: Vector3, frac: float) -> void:
+	_ensure_corn_assets()
+	for i in 48:
+		var k := MeshInstance3D.new()
+		k.mesh = _corn_mesh
+		k.material_override = _corn_mat
+		k.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var around := _path_point(clampf(frac + randf_range(-0.12, 0.12), 0.04, 0.96))
+		k.position = around + Vector3(randf_range(-2.4, 2.4), randf_range(2.8, 9.5), randf_range(-2.4, 2.4))
+		k.rotation = Vector3(randf() * TAU, randf() * TAU, randf() * TAU)
+		k.set_meta("fall", randf_range(5.2, 9.0))
+		k.set_meta("spin", Vector3(randf_range(-5.0, 5.0), randf_range(-8.0, 8.0), randf_range(-5.0, 5.0)))
+		_live_fx.add_child(k)
+	for i in 10:
+		_spawn_kernels(_live_fx, _path_point(clampf(frac + float(i - 5) * 0.04, 0.05, 0.95)), 4, 0.16)
+
+
+func _tick_corn_rain(delta: float) -> void:
+	for child in _live_fx.get_children():
+		if not child.has_meta("fall"):
+			continue
+		var node := child as Node3D
+		if node == null:
+			continue
+		node.position.y -= float(node.get_meta("fall")) * delta
+		var spin: Vector3 = node.get_meta("spin")
+		node.rotation += spin * delta
+		if node.position.y < 0.28:
+			node.position.y = randf_range(5.5, 9.2)
+			node.position.x = _live_at.x + randf_range(-2.6, 2.6)
+			node.position.z = _live_at.z + randf_range(-2.6, 2.6)
+
+
+func _spawn_hawk(at: Vector3) -> Node3D:
+	var hawk := Node3D.new()
+	hawk.name = "Hawk"
+	hawk.position = at + Vector3(0, 7.2, 0)
+	var feather := GutterLooks.mat(Color("3a2418"), 0.78)
+	var dark := GutterLooks.mat(Color("1a120e"), 0.7)
+	var beak := GutterLooks.mat(Color("c47828"), 0.45)
+	_mesh_on(hawk, GutterLooks.box(Vector3(0.38, 0.22, 1.15)), feather, Vector3(0, 0, 0))
+	_mesh_on(hawk, GutterLooks.box(Vector3(3.4, 0.08, 0.7)), dark, Vector3(0, 0.04, 0.05))
+	_mesh_on(hawk, GutterLooks.box(Vector3(0.22, 0.16, 0.32)), feather, Vector3(0, 0.04, -0.62))
+	_mesh_on(hawk, GutterLooks.box(Vector3(0.08, 0.08, 0.22)), beak, Vector3(0, 0.0, -0.82))
+	_mesh_on(hawk, GutterLooks.box(Vector3(0.18, 0.28, 0.12)), dark, Vector3(0, 0.16, 0.52))
+	_live_fx.add_child(hawk)
+	return hawk
+
+
+func _spawn_hawk_shadow(at: Vector3) -> Node3D:
+	var shadow := CSGCylinder3D.new()
+	shadow.radius = 1.8
+	shadow.height = 0.04
+	shadow.sides = 10
+	shadow.position = Vector3(at.x, 0.27, at.z)
+	shadow.material = GutterLooks.mat(Color(0.04, 0.03, 0.02, 0.7), 0.95)
+	shadow.use_collision = false
+	_live_fx.add_child(shadow)
+	return shadow
+
+
+func _tick_hawk() -> void:
+	if _hawk == null:
+		return
+	var dive := clampf(_live_t / 1.15, 0.0, 1.0)
+	var y := lerpf(7.2, 1.05, dive)
+	if _live_t > 1.2:
+		y = lerpf(1.05, 5.4, clampf((_live_t - 1.2) / 1.1, 0.0, 1.0))
+	var sweep := sin(_live_t * 2.1) * 2.4
+	_hawk.position = _live_at + Vector3(sweep, y, cos(_live_t * 1.6) * 1.4)
+	_hawk.rotation.z = -sweep * 0.12
+	_hawk.rotation.x = 0.55 if dive < 1.0 and _live_t < 1.2 else -0.15
+	if _hawk_shadow:
+		_hawk_shadow.position = Vector3(_hawk.position.x, 0.27, _hawk.position.z)
+		var wide := 2.6 if y < 2.2 else 1.6
+		_hawk_shadow.scale = Vector3(wide, 1.0, wide)
+
+
+func _spawn_dog(at: Vector3) -> Node3D:
+	var dog := Node3D.new()
+	dog.name = "LooseDog"
+	dog.position = at
+	var hide := GutterLooks.mat(Color("6a4224"), 0.82)
+	var dark := GutterLooks.mat(Color("2a1a10"), 0.75)
+	_mesh_on(dog, GutterLooks.box(Vector3(0.42, 0.38, 0.95)), hide, Vector3(0, 0.32, 0))
+	_mesh_on(dog, GutterLooks.box(Vector3(0.36, 0.32, 0.36)), hide, Vector3(0, 0.42, -0.52))
+	_mesh_on(dog, GutterLooks.box(Vector3(0.08, 0.22, 0.12)), dark, Vector3(-0.12, 0.62, -0.52))
+	_mesh_on(dog, GutterLooks.box(Vector3(0.08, 0.22, 0.12)), dark, Vector3(0.12, 0.62, -0.52))
+	_mesh_on(dog, GutterLooks.box(Vector3(0.1, 0.08, 0.16)), dark, Vector3(0, 0.34, -0.7))
+	_mesh_on(dog, GutterLooks.box(Vector3(0.08, 0.1, 0.28)), hide, Vector3(0, 0.38, 0.55))
+	for side in [-1.0, 1.0]:
+		_mesh_on(dog, GutterLooks.cyl(0.055, 0.28, 6), dark, Vector3(side * 0.14, 0.12, -0.28))
+		_mesh_on(dog, GutterLooks.cyl(0.055, 0.28, 6), dark, Vector3(side * 0.14, 0.12, 0.28))
+	_live_fx.add_child(dog)
+	return dog
+
+
+func _tick_dog(_delta: float) -> void:
+	if _dog == null:
+		return
+	var a := _live_t * 2.15
+	var rx := Game.TRACK_RX - Game.TRACK_WIDTH * 0.22
+	var rz := Game.TRACK_RZ - Game.TRACK_WIDTH * 0.22
+	var next := Vector3(cos(a) * rx, 0.12 + absf(sin(_live_t * 14.0)) * 0.08, sin(a) * rz)
+	_dog.global_position = next
+	var ahead := Vector3(cos(a + 0.12) * rx, next.y, sin(a + 0.12) * rz)
+	if Vector3(ahead.x - next.x, 0.0, ahead.z - next.z).length_squared() > 0.0001:
+		_dog.look_at(ahead, Vector3.UP)
+
+
+func _spawn_gun_puff(at: Vector3) -> void:
+	var puff := CSGCylinder3D.new()
+	puff.radius = 0.55
+	puff.height = 1.1
+	puff.sides = 8
+	puff.position = at
+	puff.material = GutterLooks.mat(Color(0.85, 0.85, 0.8, 0.55), 0.95)
+	puff.use_collision = false
+	_live_fx.add_child(puff)
+	_spawn_event_light(at, Color("f0ead8"), 5.5, 9.0)
+
+
+func _spawn_crowd_lean() -> void:
+	for i in 8:
+		var t := float(i) / 8.0
+		var p := Vector3((t - 0.5) * 18.0, 1.4, 15.4)
+		var slab := CSGBox3D.new()
+		slab.size = Vector3(1.6, 1.1, 0.35)
+		slab.position = p
+		slab.rotation.x = 0.35
+		slab.material = GutterLooks.mat(Color("8a3a4a"), 0.7)
+		slab.use_collision = false
+		_live_fx.add_child(slab)
+	_spawn_event_light(Vector3(0, 2.6, 0), Color("8a3a4a"), 2.0, 14.0)
+
+
+func _mesh_on(parent: Node3D, mesh_res: Mesh, material: Material, pos: Vector3) -> MeshInstance3D:
+	return GutterLooks.mesh(parent, mesh_res, material, pos)
 
 
 func _clear_fx(root: Node3D) -> void:

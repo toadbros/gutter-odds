@@ -18,7 +18,7 @@ signal market_changed
 signal meet_changed
 signal coop_requested
 signal market_requested
-signal event_callout(text: String)
+signal event_callout(text: String, event_id: int)
 
 const STARTING_CAPS := 100
 const VIP_COST := 25
@@ -588,18 +588,20 @@ func apply_network_results(payload: Dictionary) -> void:
 	set_ui_open(true)
 
 
-func announce(text: String) -> void:
-	if text.is_empty() or _announce_cd > 0.0:
+func announce(text: String, force: bool = false) -> void:
+	if text.is_empty():
+		return
+	if _announce_cd > 0.0 and not force:
 		return
 	_announce_cd = 2.3
 	callout.emit(text)
 
 
-func event_announce(text: String) -> void:
+func event_announce(text: String, event_id: int = 0) -> void:
 	if text.is_empty():
 		return
 	_announce_cd = 1.4
-	event_callout.emit(text)
+	event_callout.emit(text, event_id)
 
 
 func set_ui_open(open: bool) -> void:
@@ -867,6 +869,12 @@ func _bind_inputs() -> void:
 	_bind_key("open_bookie", KEY_B)
 	_bind_key("open_coop", KEY_K)
 	_bind_key("open_market", KEY_M)
+	_bind_key("chaos_hawk", KEY_1)
+	_bind_key("chaos_corn", KEY_2)
+	_bind_key("chaos_oil", KEY_3)
+	_bind_key("chaos_dog", KEY_4)
+	_bind_key("chaos_gun", KEY_5)
+	_bind_key("chaos_crowd", KEY_6)
 	var mouse := InputEventMouseButton.new()
 	mouse.button_index = MOUSE_BUTTON_RIGHT
 	if not InputMap.has_action("binoculars"):
