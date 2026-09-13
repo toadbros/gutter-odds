@@ -631,16 +631,15 @@ func to_field_payload() -> Dictionary:
 
 
 func archetype_name() -> String:
-	match archetype:
-		Archetype.SPRINTER:
-			return "Restless"
-		Archetype.STEADY:
-			return "Clockwork"
-		Archetype.CHAOS:
-			return "Unhinged"
-		Archetype.LATE:
-			return "Sleeper"
-	return "Unknown"
+	return ChickenStock.archetype_name(int(archetype))
+
+
+func archetype_line() -> String:
+	return ChickenStock.archetype_line(int(archetype))
+
+
+func bet_card_text() -> String:
+	return "%s  ·  %s  ·  %s" % [display_name, archetype_name(), archetype_line()]
 
 
 func _begin_slide(frac: float) -> void:

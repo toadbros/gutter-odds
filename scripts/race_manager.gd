@@ -1065,7 +1065,8 @@ func _refresh_board() -> void:
 	])
 	for snail in field:
 		var mark := " *" if snail.owner_id == NetPlay.local_id() and not snail.chicken_id.begins_with("npc_") else ""
-		lines.append("%s%s    %s    %s    %s" % [snail.display_name, mark, snail.grade_name(), snail.odds_text(), ChickenStock.trait_summary(snail)])
+		lines.append("%s%s    %s    %s" % [snail.display_name, mark, snail.archetype_name(), snail.odds_text()])
+		lines.append("  %s" % snail.archetype_line())
 	board.text = "\n".join(lines)
 	var sched := get_tree().get_first_node_in_group("schedule_board") as Label3D
 	if sched:
