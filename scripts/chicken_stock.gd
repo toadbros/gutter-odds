@@ -239,6 +239,20 @@ static func has_trait(bird, trait_id: int) -> bool:
 	return _bird_traits(bird).has(trait_id)
 
 
+static func quirk_names(bird) -> PackedStringArray:
+	var out: PackedStringArray = []
+	var ids := _bird_traits(bird)
+	for i in mini(ids.size(), 2):
+		var label := trait_name(ids[i])
+		if not label.is_empty():
+			out.append(label)
+	return out
+
+
+static func quirk_line(bird) -> String:
+	return "  ·  ".join(quirk_names(bird))
+
+
 static func trait_summary(bird) -> String:
 	var ids := _bird_traits(bird)
 	if ids.is_empty():

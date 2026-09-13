@@ -720,8 +720,34 @@ func archetype_line() -> String:
 	return ChickenStock.archetype_line(int(archetype))
 
 
+func quirk_names() -> PackedStringArray:
+	return ChickenStock.quirk_names(self)
+
+
+func quirk_line() -> String:
+	return ChickenStock.quirk_line(self)
+
+
+func bet_card_title() -> String:
+	var bits: PackedStringArray = [archetype_name()]
+	bits.append_array(quirk_names())
+	return "  ·  ".join(bits)
+
+
+func card_tell() -> String:
+	var event := RaceChaos.LiveEvent.NONE
+	var manager := get_tree().get_first_node_in_group("race_manager")
+	if manager:
+		event = int(manager.live_event)
+	return RaceChaos.card_tell(int(archetype), traits, Game.card_condition(), event)
+
+
 func bet_card_text() -> String:
-	return "%s  ·  %s  ·  %s" % [display_name, archetype_name(), archetype_line()]
+	var tell := card_tell()
+	var headline := "%s  ·  %s" % [display_name, bet_card_title()]
+	if tell.is_empty():
+		return headline
+	return "%s\n%s" % [headline, tell]
 
 
 func _begin_slide(frac: float) -> void:

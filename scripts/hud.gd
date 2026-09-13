@@ -543,10 +543,10 @@ func _fill_bookie() -> void:
 			i + 1,
 			snail.display_name,
 			snail.odds_text(),
-			snail.archetype_name(),
-			snail.archetype_line(),
+			snail.bet_card_title(),
+			snail.card_tell(),
 		]
-		row.custom_minimum_size = Vector2(500, 62)
+		row.custom_minimum_size = Vector2(500, 68)
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		_style_button(row)
 		var idx: int = i
@@ -582,10 +582,10 @@ func _refresh_field_card() -> void:
 		row.text = "#%d  %s    %s\n%s" % [
 			i + 1,
 			snail.display_name,
-			snail.archetype_name(),
-			snail.archetype_line(),
+			snail.bet_card_title(),
+			snail.card_tell(),
 		]
-		row.custom_minimum_size = Vector2(360, 56)
+		row.custom_minimum_size = Vector2(360, 62)
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		_style_button(row)
 		row.add_theme_font_size_override("font_size", 15)
@@ -1185,7 +1185,7 @@ func _build_bookie(root: Control) -> Control:
 	title.offset_top = 16
 	title.offset_bottom = 52
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var hint := _label(panel, "Name, type, one line. Pick a bird before the window slams.", 14, Vector2(24, 52), MUTED)
+	var hint := _label(panel, "Name, type, quirks, one tell. Pick a bird before the window slams.", 14, Vector2(24, 52), MUTED)
 	hint.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	hint.offset_left = 24
 	hint.offset_right = -24
