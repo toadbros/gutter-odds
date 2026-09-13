@@ -575,7 +575,7 @@ func _spawn_slick(parent: Node3D, at: Vector3, color: Color, radius: float = 1.1
 	slick.height = 0.07
 	slick.sides = 12
 	slick.position = Vector3(at.x, 0.27, at.z)
-	slick.material = GutterLooks.mat(color, 0.12, 0.82, color.lightened(0.2), 0.55)
+	slick.material = GutterLooks.mat(color, 0.08, 0.92, Color("6a5a28"), 1.4)
 	slick.use_collision = false
 	parent.add_child(slick)
 	var smear := CSGBox3D.new()
@@ -585,6 +585,14 @@ func _spawn_slick(parent: Node3D, at: Vector3, color: Color, radius: float = 1.1
 	smear.material = GutterLooks.mat(color.lightened(0.08), 0.16, 0.7, color.lightened(0.15), 0.4)
 	smear.use_collision = false
 	parent.add_child(smear)
+	var rim := CSGCylinder3D.new()
+	rim.radius = radius + 0.22
+	rim.height = 0.03
+	rim.sides = 14
+	rim.position = Vector3(at.x, 0.275, at.z)
+	rim.material = GutterLooks.mat(Color("e8c03a"), 0.35, 0.15, Color("f0d060"), 1.6)
+	rim.use_collision = false
+	parent.add_child(rim)
 
 
 func _spawn_kernels(parent: Node3D, at: Vector3, count: int, size: float = 0.05) -> void:
@@ -649,8 +657,6 @@ func _spawn_corn_rain(at: Vector3, frac: float) -> void:
 		_live_fx.add_child(k)
 	for i in 10:
 		_spawn_kernels(_live_fx, _path_point(clampf(frac + float(i - 5) * 0.04, 0.05, 0.95)), 4, 0.16)
-	var banner := _world_yell("CORN RAIN", at + Vector3(0, 3.1, 0), Color("e8c03a"))
-	_live_fx.add_child(banner)
 
 
 func _tick_corn_rain(delta: float) -> void:
@@ -682,8 +688,6 @@ func _spawn_hawk(at: Vector3) -> Node3D:
 	_mesh_on(hawk, GutterLooks.box(Vector3(0.08, 0.08, 0.22)), beak, Vector3(0, 0.0, -0.82))
 	_mesh_on(hawk, GutterLooks.box(Vector3(0.18, 0.28, 0.12)), dark, Vector3(0, 0.16, 0.52))
 	_live_fx.add_child(hawk)
-	var yell := _world_yell("HAWK", at + Vector3(0, 4.4, 0), Color("e8a0a0"))
-	_live_fx.add_child(yell)
 	return hawk
 
 
@@ -732,8 +736,6 @@ func _spawn_dog(at: Vector3) -> Node3D:
 		_mesh_on(dog, GutterLooks.cyl(0.055, 0.28, 6), dark, Vector3(side * 0.14, 0.12, -0.28))
 		_mesh_on(dog, GutterLooks.cyl(0.055, 0.28, 6), dark, Vector3(side * 0.14, 0.12, 0.28))
 	_live_fx.add_child(dog)
-	var yell := _world_yell("LOOSE DOG", Vector3(0, 2.4, 0), Color("e8c090"))
-	_live_fx.add_child(yell)
 	return dog
 
 
@@ -760,8 +762,6 @@ func _spawn_gun_puff(at: Vector3) -> void:
 	puff.use_collision = false
 	_live_fx.add_child(puff)
 	_spawn_event_light(at, Color("f0ead8"), 5.5, 9.0)
-	var yell := _world_yell("FALSE GUN", at + Vector3(0, 1.4, 0), Color("f0ead8"))
-	_live_fx.add_child(yell)
 
 
 func _spawn_crowd_lean() -> void:
@@ -776,22 +776,6 @@ func _spawn_crowd_lean() -> void:
 		slab.use_collision = false
 		_live_fx.add_child(slab)
 	_spawn_event_light(Vector3(0, 2.6, 0), Color("8a3a4a"), 2.0, 14.0)
-	var yell := _world_yell("CROWD SQUEEZE", Vector3(0, 3.4, 0), Color("e8a0b0"))
-	_live_fx.add_child(yell)
-
-
-func _world_yell(text: String, at: Vector3, color: Color) -> Label3D:
-	var l := Label3D.new()
-	l.text = text
-	l.position = at
-	l.font_size = 72
-	l.pixel_size = 0.012
-	l.modulate = color
-	l.outline_size = 14
-	l.outline_modulate = Color("1a120e")
-	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	l.no_depth_test = true
-	return l
 
 
 func _mesh_on(parent: Node3D, mesh_res: Mesh, material: Material, pos: Vector3) -> MeshInstance3D:

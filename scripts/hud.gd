@@ -198,16 +198,16 @@ func show_toast(text: String) -> void:
 
 
 func show_callout(text: String) -> void:
-	var yelling := _yell_title and _yell_title.modulate.a > 0.05 and not _yell_title.text.is_empty()
-	if not yelling:
-		if _yell_title:
-			_yell_title.modulate.a = 0.0
-			_yell_title.text = ""
-		_callout.add_theme_font_size_override("font_size", 26)
-		_callout.add_theme_color_override("font_color", BRASS)
+	if _yell_title and _yell_title.modulate.a > 0.05 and not _yell_title.text.is_empty():
+		return
+	if _yell_title:
+		_yell_title.modulate.a = 0.0
+		_yell_title.text = ""
+	_callout.add_theme_font_size_override("font_size", 26)
+	_callout.add_theme_color_override("font_color", BRASS)
 	_callout.text = text
 	_callout.modulate.a = 1.0
-	_callout_time = maxf(_callout_time, 2.6)
+	_callout_time = 2.6
 
 
 func show_event_callout(text: String, event_id: int = 0) -> void:
@@ -215,9 +215,9 @@ func show_event_callout(text: String, event_id: int = 0) -> void:
 	if title.is_empty():
 		title = RaceChaos.condition_name(Game.card_condition()).to_upper()
 	var rank := RaceChaos.event_rank(event_id)
-	var size := 56
+	var size := 52
 	if event_id > 0:
-		size = 96 if rank <= 1 else (78 if rank == 2 else 62)
+		size = 86 if rank <= 1 else (70 if rank == 2 else 58)
 	if _yell_title:
 		_yell_title.text = title
 		_yell_title.modulate = Color.WHITE
@@ -588,7 +588,7 @@ func _build() -> void:
 	_yell_title.offset_bottom = 188
 	_yell_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_yell_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_yell_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_yell_title.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_yell_title.add_theme_color_override("font_outline_color", Color(0.06, 0.03, 0.02, 0.94))
 	_yell_title.add_theme_constant_override("outline_size", 16)
 	_yell_title.pivot_offset = Vector2(720, 50)

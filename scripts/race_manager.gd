@@ -298,11 +298,11 @@ func apply_network_event(payload: Dictionary) -> void:
 		return
 	apply_chaos_state(payload)
 	var line := str(payload.get("callout", RaceChaos.event_callout(live_event)))
-	if not line.is_empty():
-		Game.event_announce(line, live_event)
 	var victim := str(payload.get("victim", ""))
 	if not victim.is_empty():
-		Game.announce(victim, true)
+		line = victim
+	if not line.is_empty():
+		Game.event_announce(line, live_event)
 
 
 func _process(delta: float) -> void:
@@ -864,9 +864,8 @@ func _fire_live_event(picked: int, consume: bool) -> void:
 	var victim := _strike_live_event()
 	_event_struck = true
 	var line := RaceChaos.event_callout(live_event)
-	Game.event_announce(line, live_event)
-	if not victim.is_empty():
-		Game.announce(victim, true)
+	var shown := victim if not victim.is_empty() else line
+	Game.event_announce(shown, live_event)
 	get_tree().call_group("stadium", "show_live_event", live_event, event_at)
 	NetPlay.send_race_event({
 		"card_condition": card_condition,
@@ -874,7 +873,7 @@ func _fire_live_event(picked: int, consume: bool) -> void:
 		"event_t": event_t,
 		"event_dur": event_dur,
 		"event_at": event_at,
-		"callout": line,
+		"callout": shown,
 		"victim": victim,
 		"ended": false,
 	})
