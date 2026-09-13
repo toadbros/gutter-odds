@@ -20,6 +20,8 @@ var _dog: Node3D
 var _hawk_shadow: Node3D
 var _corn_mesh: BoxMesh
 var _corn_mat: StandardMaterial3D
+var _finish_fx: Node3D
+var _finish_t: float = 0.0
 
 func _ready() -> void:
 	add_to_group("stadium")
@@ -43,6 +45,9 @@ func _ready() -> void:
 	_live_fx = Node3D.new()
 	_live_fx.name = "LiveFx"
 	add_child(_live_fx)
+	_finish_fx = Node3D.new()
+	_finish_fx.name = "FinishFx"
+	add_child(_finish_fx)
 	Game.vip_changed.connect(_on_vip_changed)
 	Game.coop_changed.connect(_refresh_coop)
 	Game.meet_changed.connect(_refresh_schedule)
@@ -480,6 +485,49 @@ func show_live_event(event: int, at_distance: float) -> void:
 			_spawn_crowd_lean()
 
 
+func punch_pack(at: Vector3) -> void:
+	if _live_fx == null:
+		return
+	_spawn_event_light(at + Vector3(0, 1.8, 0), Color("f0ead8"), 3.4, 8.0)
+
+
+func show_finish_punch(at: Vector3) -> void:
+	if _finish_fx == null:
+		return
+	_clear_fx(_finish_fx)
+	_finish_t = 1.8
+	var banner := Label3D.new()
+	banner.text = "THEY'RE IN"
+	banner.font_size = 72
+	banner.pixel_size = 0.004
+	banner.position = Vector3(Game.TRACK_RX + 0.4, 2.6, 0)
+	banner.modulate = Color("e8c03a")
+	banner.outline_size = 12
+	banner.outline_modulate = Color("1a120e")
+	banner.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	banner.no_depth_test = true
+	_finish_fx.add_child(banner)
+	var light := OmniLight3D.new()
+	light.light_color = Color("fff1d2")
+	light.light_energy = 6.2
+	light.omni_range = 14.0
+	light.position = at + Vector3(0, 2.2, 0)
+	light.shadow_enabled = false
+	_finish_fx.add_child(light)
+	var tape := MeshInstance3D.new()
+	tape.name = "FinishTape"
+	tape.mesh = GutterLooks.box(Vector3(0.12, 0.08, 2.8))
+	tape.material_override = GutterLooks.mat(Color("c42828"), 0.4, 0.0, Color("e8c03a"), 2.2)
+	tape.position = Vector3(Game.TRACK_RX, Game.TRACK_SURFACE_Y + 0.42, 0)
+	tape.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_finish_fx.add_child(tape)
+
+
+func clear_finish_punch() -> void:
+	_finish_t = 0.0
+	_clear_fx(_finish_fx)
+
+
 func clear_live_event() -> void:
 	_live_event = RaceChaos.LiveEvent.NONE
 	_live_t = 0.0
@@ -491,6 +539,10 @@ func clear_live_event() -> void:
 
 
 func _process(delta: float) -> void:
+	if _finish_t > 0.0:
+		_finish_t = maxf(_finish_t - delta, 0.0)
+		if _finish_t <= 0.0:
+			clear_finish_punch()
 	if _live_event == RaceChaos.LiveEvent.NONE or _live_fx == null:
 		return
 	_live_t += delta

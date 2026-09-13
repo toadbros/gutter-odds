@@ -47,6 +47,8 @@ var told_slip: bool = false
 
 var _model: Node3D
 var _label: Label3D
+var _mine_ring: MeshInstance3D
+var _mine_light: OmniLight3D
 var _legs: Node3D
 var _wag: float = 0.0
 var _crawl: Crawl = Crawl.REST
@@ -89,6 +91,22 @@ func _ready() -> void:
 	_label.outline_modulate = Color("1a120e")
 	_label.no_depth_test = true
 	add_child(_label)
+	_mine_ring = MeshInstance3D.new()
+	_mine_ring.name = "MineRing"
+	_mine_ring.mesh = GutterLooks.cyl(0.28, 0.04, 14)
+	_mine_ring.material_override = GutterLooks.mat(Color("c4e08a"), 0.35, 0.0, Color("c4e08a"), 2.4)
+	_mine_ring.position = Vector3(0, 0.03, 0)
+	_mine_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_mine_ring.visible = false
+	add_child(_mine_ring)
+	_mine_light = OmniLight3D.new()
+	_mine_light.light_color = Color("c4e08a")
+	_mine_light.light_energy = 1.35
+	_mine_light.omni_range = 2.4
+	_mine_light.position = Vector3(0, 0.55, 0)
+	_mine_light.visible = false
+	_mine_light.shadow_enabled = false
+	add_child(_mine_light)
 
 
 func configure(data: Dictionary, number: int, lane_offset: float) -> void:
@@ -150,11 +168,8 @@ func configure(data: Dictionary, number: int, lane_offset: float) -> void:
 		child.queue_free()
 	GutterLooks.build_chicken(_model, shell_color, number, ChickenStock.is_rooster(data))
 	_legs = _model.get_node_or_null("Legs")
-	if _label:
-		_label.modulate = Color("f0e6d0")
-		_label.text = display_name
-		if owner_id == NetPlay.local_id() and not chicken_id.begins_with("npc_"):
-			_label.text = "%s  ·  YOURS" % display_name
+	_refresh_owned_nametag()
+	_refresh_mine_mark()
 	reset_pose()
 	leave_track_follow()
 	net_smooth.clear()
@@ -165,8 +180,21 @@ func set_nametag(text: String) -> void:
 	if text.is_empty():
 		return
 	display_name = text
-	if _label:
-		_label.text = text
+	_refresh_owned_nametag()
+
+
+func is_local_entry() -> bool:
+	return owner_id == NetPlay.local_id() and not chicken_id.begins_with("npc_")
+
+
+func owned_nametag() -> String:
+	if is_local_entry():
+		return "%s  ·  YOURS" % display_name
+	return display_name
+
+
+func has_mine_mark() -> bool:
+	return _mine_ring != null and _mine_ring.visible
 
 
 func release_to_yard(amin: Vector3, amax: Vector3, at: Vector3) -> void:
@@ -179,8 +207,8 @@ func release_to_yard(amin: Vector3, amax: Vector3, at: Vector3) -> void:
 	add_to_group("yard_chicken")
 	global_position = _clamp_yard(at)
 	rotation = Vector3(0.0, randf() * TAU, 0.0)
-	if _label:
-		_label.text = display_name
+	_refresh_owned_nametag()
+	_refresh_mine_mark()
 	_hide_race_number()
 	_startle_cd = randf_range(0.2, 1.4)
 	_pick_yard_act(true)
@@ -473,9 +501,8 @@ func _process(delta: float) -> void:
 			_idle_on_track()
 			_animate_legs(false)
 		if _label and not fried and _label.text.contains("\n"):
-			_label.text = display_name
-			_label.modulate = Color("f0e6d0")
-			_label.font_size = 22
+			_refresh_owned_nametag()
+		_refresh_mine_mark()
 		return
 	if not (NetPlay.is_client() and not net_smooth.is_empty()):
 		_shown_vel = move_toward(_shown_vel, vel, delta * 4.5)
@@ -511,6 +538,7 @@ func _process(delta: float) -> void:
 	_model.position.y = lerpf(_model.position.y, bob, 1.0 - exp(-delta * 14.0))
 	_animate_legs(move_w > 0.22)
 	_refresh_chaos_nametag()
+	_refresh_mine_mark()
 
 
 func _animate_legs(moving: bool) -> void:
@@ -549,17 +577,43 @@ func _animate_legs(moving: bool) -> void:
 		tail.rotation.y = sin(_wag * lerpf(1.5, 6.4, w)) * lerpf(0.07, 0.16, w)
 
 
+func _refresh_owned_nametag() -> void:
+	if _label == null or fried:
+		return
+	_label.text = owned_nametag()
+	_label.modulate = Color("c4e08a") if is_local_entry() else Color("f0e6d0")
+	_label.font_size = 28 if is_local_entry() else 22
+	_label.outline_size = 10 if is_local_entry() else 8
+
+
+func _refresh_mine_mark() -> void:
+	var show := is_local_entry() and not fried and not in_yard and (
+		racing or Game.phase == Game.Phase.RACE or Game.phase == Game.Phase.COUNTDOWN or Game.phase == Game.Phase.RESULTS
+	)
+	if _mine_ring:
+		_mine_ring.visible = show
+		if show:
+			var pulse := 1.0 + 0.12 * sin(_wag * 6.4)
+			_mine_ring.scale = Vector3(pulse, 1.0, pulse)
+	if _mine_light:
+		_mine_light.visible = show
+		if show:
+			_mine_light.light_energy = 1.15 + 0.35 * absf(sin(_wag * 6.4))
+
+
 func _refresh_chaos_nametag() -> void:
 	if _label == null or fried or not racing:
 		return
 	var tag := race_tag()
+	var mine := is_local_entry()
 	if tag.is_empty() or tag == "IN":
-		_label.text = display_name
-		_label.modulate = Color("f0e6d0")
-		_label.font_size = 22
+		_refresh_owned_nametag()
+		if tag == "IN":
+			_label.text = "%s\nIN" % owned_nametag()
+			_label.font_size = 26 if mine else 22
 		return
-	_label.text = "%s\n%s" % [display_name, tag]
-	_label.font_size = 26
+	_label.text = "%s\n%s" % [owned_nametag(), tag]
+	_label.font_size = 28 if mine else 26
 	match tag:
 		"PECKING":
 			_label.modulate = Color("e8c03a")
@@ -570,7 +624,7 @@ func _refresh_chaos_nametag() -> void:
 		"PINNED":
 			_label.modulate = Color("d08090")
 		_:
-			_label.modulate = Color("f0e6d0")
+			_label.modulate = Color("c4e08a") if mine else Color("f0e6d0")
 
 
 func race_tag() -> String:

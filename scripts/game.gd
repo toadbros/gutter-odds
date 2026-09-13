@@ -569,7 +569,6 @@ func on_race_finished(winner_index: int, standings: Array) -> void:
 		return
 	results_clock = RESULTS_BEAT
 	_set_phase(Phase.RESULTS)
-	get_tree().call_group("race_director", "deactivate")
 	var payload := _settle_card(winner_index, standings)
 	payload["results_clock"] = results_clock
 	last_results = payload
@@ -586,7 +585,6 @@ func apply_network_results(payload: Dictionary) -> void:
 		return
 	results_clock = float(payload.get("results_clock", RESULTS_BEAT))
 	_set_phase(Phase.RESULTS)
-	get_tree().call_group("race_director", "deactivate")
 	_settle_local_from(payload)
 	last_results = payload
 	_play_results_roast(payload)

@@ -42,6 +42,8 @@ var _event_struck: bool = false
 var _dealt: Array[int] = []
 var _snap_t: float = 0.0
 var _npc_backup: Array[Dictionary] = []
+var _finish_punched: bool = false
+var last_pack_beat: Dictionary = {}
 
 const SNAIL_SCENE := preload("res://scenes/snail.tscn")
 const RACE_HARD_CAP := 75.0
@@ -71,6 +73,8 @@ func deal_field() -> void:
 	racing = false
 	race_time = 0.0
 	first_finish_at = -1.0
+	_finish_punched = false
+	last_pack_beat.clear()
 	_roll_card_chaos()
 	_ensure_snails()
 	var path := _path()
@@ -131,6 +135,8 @@ func move_to_gates() -> void:
 func start_race() -> void:
 	race_time = 0.0
 	first_finish_at = -1.0
+	_finish_punched = false
+	last_pack_beat.clear()
 	racing = true
 	live_event = RaceChaos.LiveEvent.NONE
 	event_t = 0.0
@@ -297,6 +303,12 @@ func apply_network_event(payload: Dictionary) -> void:
 	if NetPlay.is_server():
 		return
 	var ended := bool(payload.get("ended", false))
+	if bool(payload.get("finish", false)):
+		_client_finish_punch(payload)
+		return
+	if bool(payload.get("results_hold", false)):
+		_client_results_hold(payload)
+		return
 	if ended:
 		_clear_live_event(false)
 		return
@@ -307,6 +319,8 @@ func apply_network_event(payload: Dictionary) -> void:
 		line = victim
 	if not line.is_empty():
 		Game.event_announce(line, live_event)
+	var victim_snail := _snail_named(victim)
+	_body_beat(victim_snail)
 
 
 func _process(delta: float) -> void:
@@ -335,6 +349,7 @@ func _process(delta: float) -> void:
 			snail.place = finished_count
 			if first_finish_at < 0.0:
 				first_finish_at = race_time
+				_punch_first_finish(snail)
 		_place_on_track(snail)
 	_call_the_race()
 	get_tree().call_group("hud", "set_standings", standings())
@@ -374,6 +389,53 @@ func standings() -> Array:
 			"fried": s.fried,
 		})
 	return rows
+
+
+func mark_local_entry(index: int = 0) -> Snail:
+	if index < 0 or index >= field.size():
+		return null
+	var snail: Snail = field[index]
+	snail.owner_id = NetPlay.local_id()
+	if snail.chicken_id.begins_with("npc_") or snail.chicken_id.is_empty():
+		snail.chicken_id = "ch_feel_%d" % index
+	snail.set_nametag(snail.display_name)
+	return snail
+
+
+func local_entry() -> Snail:
+	for snail in field:
+		if snail.is_local_entry():
+			return snail
+	return null
+
+
+func lead_name() -> String:
+	var leader := get_leader()
+	return leader.display_name if leader else ""
+
+
+func did_finish_punch() -> bool:
+	return _finish_punched
+
+
+func feel_snapshot() -> Dictionary:
+	var leader := get_leader()
+	var mine := local_entry()
+	var tags: PackedStringArray = []
+	for snail in field:
+		var tag := snail.race_tag()
+		if not tag.is_empty():
+			tags.append("%s:%s" % [snail.display_name, tag])
+	return {
+		"lead": leader.display_name if leader else "",
+		"lead_d": leader.distance if leader else 0.0,
+		"mine": mine.display_name if mine else "",
+		"mine_tag": mine.owned_nametag() if mine else "",
+		"mine_marked": mine.has_mine_mark() if mine else false,
+		"event": live_event,
+		"tags": tags,
+		"beat": last_pack_beat.duplicate(),
+	}
 
 
 func get_leader() -> Snail:
@@ -499,6 +561,17 @@ func _finish_race() -> void:
 		if int(row["place"]) == 1:
 			winner_index = int(row["index"])
 			break
+	var winner := field[winner_index] if winner_index >= 0 and winner_index < field.size() else get_leader()
+	if winner:
+		get_tree().call_group("race_director", "hold_results", winner)
+		get_tree().call_group("hud", "show_results_punch", winner.display_name, winner.is_local_entry())
+		get_tree().call_group("stadium", "show_finish_punch", winner.global_position)
+		NetPlay.send_race_event({
+			"results_hold": true,
+			"finish_index": winner.snail_id,
+			"finish_name": winner.display_name,
+			"yours": winner.is_local_entry(),
+		})
 	_push_snapshot()
 	Game.on_race_finished(winner_index, rows)
 
@@ -831,8 +904,9 @@ func _tick_live_events(delta: float) -> void:
 	if live_event != RaceChaos.LiveEvent.NONE:
 		event_t += delta
 		if not _event_struck:
-			_strike_live_event()
+			var late_victim := _strike_live_event()
 			_event_struck = true
+			_body_beat(_snail_named(late_victim))
 		if event_t >= event_dur:
 			_clear_live_event(true)
 		return
@@ -905,6 +979,7 @@ func _fire_live_event(picked: int, consume: bool) -> void:
 	var shown := victim if not victim.is_empty() else line
 	Game.event_announce(shown, live_event)
 	get_tree().call_group("stadium", "show_live_event", live_event, event_at)
+	_body_beat(_snail_named(victim))
 	NetPlay.send_race_event({
 		"card_condition": card_condition,
 		"event_id": live_event,
@@ -921,12 +996,14 @@ func _event_mark() -> float:
 	var leader := get_leader()
 	var lead_d := leader.distance if leader else track_length * 0.4
 	if live_event == RaceChaos.LiveEvent.OIL_SLICK:
-		return clampf(lead_d + 0.35, track_length * 0.12, track_length * 0.84)
-	return clampf(lead_d + randf_range(-0.25, 0.55), track_length * 0.12, track_length * 0.84)
+		# Sit the slick on whoever is actually leading, even after a dump-back.
+		return clampf(lead_d, 0.05, track_length * 0.88)
+	return clampf(lead_d + randf_range(-0.12, 0.22), 0.05, track_length * 0.88)
 
 
 func _strike_live_event() -> String:
 	var victim := ""
+	var lead_before := lead_name()
 	match live_event:
 		RaceChaos.LiveEvent.HAWK:
 			var flop: Snail = null
@@ -943,20 +1020,29 @@ func _strike_live_event() -> String:
 				snail.height_vel = -5.6
 				snail.squish = 0.38
 				snail.groove = clampf(snail.groove + randf_range(-0.10, 0.22), 0.04, 0.96)
+				_dump_back(snail, 0.016 if snail != flop else 0.038)
 			if flop:
 				victim = "%s belly-flops." % flop.display_name
 		RaceChaos.LiveEvent.FALSE_GUN:
+			var jumpy: Snail = null
 			for snail in field:
 				if snail.finished or not snail.racing:
 					continue
 				if snail.archetype == Snail.Archetype.LATE:
 					snail.begin_freeze(randf_range(0.7, 1.05))
+					_dump_back(snail, 0.022)
 				elif snail.archetype == Snail.Archetype.SPRINTER:
-					snail.vel = maxf(snail.vel, snail.vel * 1.15 + 0.35)
+					snail.vel = maxf(snail.vel, snail.vel * 1.15 + 0.55)
+					_nudge_ahead(snail, 0.028)
+					if jumpy == null:
+						jumpy = snail
+			if jumpy:
+				victim = "%s jumps the gun." % jumpy.display_name
 		RaceChaos.LiveEvent.CORN_RAIN:
 			var leader := get_leader()
 			if leader and leader.racing and not leader.finished and not leader.has_trait(ChickenStock.Trait.IRON_CROP):
 				leader.begin_freeze(randf_range(1.35, 2.15))
+				_dump_back(leader, 0.042)
 				victim = "%s stops for corn." % leader.display_name
 			for snail in field:
 				if snail.finished or not snail.racing:
@@ -968,30 +1054,72 @@ func _strike_live_event() -> String:
 				var hungry := RaceChaos.wants_corn_freeze(int(snail.archetype), snail.hunger)
 				if hungry or snail.has_trait(ChickenStock.Trait.CORN_FIEND):
 					snail.begin_freeze(randf_range(1.15, 2.05))
+					_dump_back(snail, 0.018)
 		RaceChaos.LiveEvent.LOOSE_DOG:
 			var punished: Snail = null
-			for snail in field:
+			var inside := field.duplicate()
+			inside.sort_custom(func(a: Snail, b: Snail) -> bool: return a.groove < b.groove)
+			var dumped := 0
+			for snail in inside:
 				if snail.finished or not snail.racing:
 					continue
 				if snail.has_trait(ChickenStock.Trait.HAWK_BLIND):
 					continue
-				if snail.groove < 0.32:
-					if punished == null or snail.archetype == Snail.Archetype.STEADY:
-						punished = snail
-					snail.groove = clampf(snail.groove + randf_range(0.16, 0.34), 0.04, 0.96)
-					snail.vel *= 0.62
-					snail.squish = minf(snail.squish, 0.62)
+				if dumped >= 3 and snail.groove >= 0.32:
+					continue
+				if punished == null or snail.archetype == Snail.Archetype.STEADY:
+					punished = snail
+				snail.groove = clampf(snail.groove + randf_range(0.16, 0.34), 0.04, 0.96)
+				snail.vel *= 0.62
+				snail.squish = minf(snail.squish, 0.62)
+				_dump_back(snail, 0.030)
+				dumped += 1
 			if punished:
 				victim = "%s dumps the rail." % punished.display_name
 		RaceChaos.LiveEvent.CROWD_SQUEEZE:
-			var cluster := _biggest_cluster()
-			if cluster.size() >= 3:
-				for snail in cluster:
-					if snail.has_trait(ChickenStock.Trait.CROWD_HOG):
-						snail.squish = minf(snail.squish, 0.82)
-						continue
-					snail.squish = 0.52
-					snail.vel *= 0.88
+			var cluster: Array[Snail] = _biggest_cluster()
+			if cluster.size() < 2:
+				cluster.clear()
+				var leader := get_leader()
+				if leader and leader.racing and not leader.finished:
+					cluster.append(leader)
+			for snail in cluster:
+				if snail.has_trait(ChickenStock.Trait.CROWD_HOG):
+					snail.squish = minf(snail.squish, 0.82)
+					continue
+				snail.squish = 0.46
+				snail.vel *= 0.72
+				snail.groove = clampf(snail.groove + randf_range(-0.18, 0.22), 0.04, 0.96)
+				_dump_back(snail, 0.014)
+			if not cluster.is_empty():
+				var pinned: Snail = cluster[0]
+				victim = "%s gets pinned." % pinned.display_name
+		RaceChaos.LiveEvent.OIL_SLICK:
+			var wrecked: Snail = null
+			for snail in field:
+				if snail.finished or not snail.racing:
+					continue
+				if not RaceChaos.near_oil(snail.distance, event_at):
+					continue
+				if snail.has_trait(ChickenStock.Trait.GREASE_LEGS):
+					continue
+				var wreck := snail.archetype == Snail.Archetype.SPRINTER
+				snail.groove = clampf(snail.groove + randf_range(0.12, 0.28), 0.04, 0.96)
+				snail.squish = 0.40 if wreck else minf(snail.squish, 0.64)
+				snail.vel *= 0.22 if wreck else 0.48
+				snail.begin_freeze(randf_range(0.55, 0.95) if wreck else randf_range(0.28, 0.52))
+				_dump_back(snail, 0.036 if wreck else 0.018)
+				if wrecked == null or wreck:
+					wrecked = snail
+			if wrecked:
+				victim = "%s wrecks on the oil." % wrecked.display_name
+	last_pack_beat = {
+		"event": live_event,
+		"lead_before": lead_before,
+		"lead_after": lead_name(),
+		"victim": victim,
+		"flipped": lead_before != lead_name() and not lead_name().is_empty(),
+	}
 	return victim
 
 
@@ -1014,6 +1142,7 @@ func _apply_track_hazards(delta: float) -> void:
 					snail.squish = 0.42 if wreck else minf(snail.squish, 0.7)
 					snail.begin_freeze(randf_range(0.55, 0.9) if wreck else randf_range(0.28, 0.52))
 					if wreck:
+						_dump_back(snail, 0.028)
 						Game.announce("%s wrecks on the oil." % snail.display_name, true)
 		else:
 			snail.zone_hit = false
@@ -1038,6 +1167,8 @@ func _stamp_chaos_tags() -> void:
 			snail.chaos_tag = "PECKING"
 		elif in_grease or in_oil:
 			snail.chaos_tag = "GREASED"
+		elif live_event == RaceChaos.LiveEvent.CROWD_SQUEEZE and snail.squish < 0.84:
+			snail.chaos_tag = "PINNED"
 		elif live_event == RaceChaos.LiveEvent.HAWK or live_event == RaceChaos.LiveEvent.LOOSE_DOG or live_event == RaceChaos.LiveEvent.FALSE_GUN:
 			snail.chaos_tag = "SPOOKED"
 		elif card_condition == RaceChaos.Condition.DUST_BOWL and snail.groove > 0.58:
@@ -1062,6 +1193,92 @@ func _clear_live_event(broadcast: bool) -> void:
 			"event_at": event_at,
 			"ended": true,
 		})
+
+
+func _dump_back(snail: Snail, frac: float) -> void:
+	if snail == null or snail.finished:
+		return
+	var amt := maxf(track_length, 0.001) * frac
+	snail.distance = maxf(snail.distance - amt, 0.05)
+	snail.vel *= 0.42
+
+
+func _nudge_ahead(snail: Snail, frac: float) -> void:
+	if snail == null or snail.finished:
+		return
+	var amt := maxf(track_length, 0.001) * frac
+	snail.distance = minf(snail.distance + amt, track_length - 0.08)
+	snail.vel = maxf(snail.vel, snail.vel * 1.08 + 0.2)
+
+
+func _body_beat(focus: Snail) -> void:
+	var pos := get_pack_focus()
+	if focus and is_instance_valid(focus):
+		pos = focus.global_position
+		get_tree().call_group("race_director", "punch_snail", focus, 1.32)
+	else:
+		get_tree().call_group("race_director", "punch_look", pos, 1.18)
+	get_tree().call_group("stadium", "punch_pack", pos)
+
+
+func _punch_first_finish(snail: Snail) -> void:
+	if _finish_punched or snail == null:
+		return
+	_finish_punched = true
+	Game.announce("%s TAKES IT" % snail.display_name, true)
+	get_tree().call_group("race_director", "punch_finish", snail)
+	get_tree().call_group("hud", "show_finish_punch", snail.display_name, snail.is_local_entry())
+	get_tree().call_group("stadium", "show_finish_punch", snail.global_position)
+	NetPlay.send_race_event({
+		"finish": true,
+		"finish_index": snail.snail_id,
+		"finish_name": snail.display_name,
+		"yours": snail.is_local_entry(),
+	})
+
+
+func _client_finish_punch(payload: Dictionary) -> void:
+	if _finish_punched:
+		return
+	_finish_punched = true
+	var snail := _snail_at(int(payload.get("finish_index", -1)))
+	if snail == null:
+		snail = get_leader()
+	var name := str(payload.get("finish_name", snail.display_name if snail else "A chicken"))
+	var yours := bool(payload.get("yours", snail.is_local_entry() if snail else false))
+	Game.announce("%s TAKES IT" % name, true)
+	if snail:
+		get_tree().call_group("race_director", "punch_finish", snail)
+		get_tree().call_group("stadium", "show_finish_punch", snail.global_position)
+	get_tree().call_group("hud", "show_finish_punch", name, yours)
+
+
+func _client_results_hold(payload: Dictionary) -> void:
+	var snail := _snail_at(int(payload.get("finish_index", -1)))
+	if snail == null:
+		snail = get_leader()
+	if snail:
+		get_tree().call_group("race_director", "hold_results", snail)
+		get_tree().call_group("stadium", "show_finish_punch", snail.global_position)
+	get_tree().call_group("hud", "show_results_punch", str(payload.get("finish_name", "")), bool(payload.get("yours", false)))
+
+
+func _snail_named(line: String) -> Snail:
+	if line.is_empty():
+		return null
+	for snail in field:
+		if line.begins_with(snail.display_name):
+			return snail
+	return null
+
+
+func _snail_at(index: int) -> Snail:
+	for snail in field:
+		if snail.snail_id == index:
+			return snail
+	if index >= 0 and index < field.size():
+		return field[index]
+	return null
 
 
 func _leader_frac() -> float:
