@@ -282,19 +282,26 @@ func open_inspect(index: int) -> void:
 
 func open_results(payload: Dictionary) -> void:
 	_results_body.clear()
+	_results_body.append_text("[color=#b08d57]1st drinks. 2nd almost. 3rd still has feathers.[/color]\n")
+	var places := {1: "—", 2: "—", 3: "—"}
+	for row in Game.podium_from(payload.get("standings", [])):
+		var place := int(row.get("place", 0))
+		if not places.has(place):
+			continue
+		var name := str(row.get("name", "Chicken"))
+		if row.get("yours", false):
+			name += "  · yours"
+		places[place] = name
+	_results_body.append_text("[b]1st[/b]  %s\n" % places[1])
+	_results_body.append_text("[b]2nd[/b]  %s\n" % places[2])
+	_results_body.append_text("[b]3rd[/b]  %s\n\n" % places[3])
 	_results_body.append_text("[b]%s[/b]\n" % payload.get("race_name", "The card"))
-	_results_body.append_text("[b]%s[/b] takes the ring.\n\n" % payload.get("winner_name", "A chicken"))
-	for row in payload.get("standings", []):
-		var o: Vector2i = row.get("odds", Vector2i(1, 1))
-		var yours := "  (yours)" if row.get("yours", false) else ""
-		_results_body.append_text("%d.  %s%s    %d/%d\n" % [int(row.get("place", 0)), row.get("name", ""), yours, o.x, o.y])
-	_results_body.append_text("\n")
+	_results_body.append_text("[b]%s[/b] takes the ring.\n" % payload.get("winner_name", "A chicken"))
 	var fried := str(payload.get("fried_name", ""))
 	if not fried.is_empty():
 		_results_body.append_text("[color=#e8a028]Last place: %s is extra crispy.[/color]\n" % fried)
 		if payload.get("fried_owned", false):
 			_results_body.append_text("The fryer paid %d caps for the carcass.\n" % ChickenStock.FRY_PAYOUT)
-		_results_body.append_text("\n")
 	if int(payload.get("purse_won", 0)) > 0:
 		_results_body.append_text("Your bird took the purse: [color=#c4e08a]+%d[/color]\n" % int(payload.get("purse_won", 0)))
 	if payload.get("wing_complete", false):
@@ -1091,7 +1098,7 @@ func _build_inspect(root: Control) -> Control:
 
 
 func _build_results(root: Control) -> Control:
-	var panel := _panel(root, Vector2(520, 560))
+	var panel := _panel(root, Vector2(520, 580))
 	panel.visible = false
 	var title := _label(panel, "THE CARD IS SETTLED", 22, Vector2(24, 16), BRASS)
 	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -1102,18 +1109,18 @@ func _build_results(root: Control) -> Control:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_results_body = RichTextLabel.new()
 	_results_body.bbcode_enabled = true
-	_results_body.position = Vector2(28, 56)
-	_results_body.size = Vector2(464, 320)
+	_results_body.position = Vector2(28, 52)
+	_results_body.size = Vector2(464, 330)
 	_results_body.add_theme_color_override("default_color", INK)
 	panel.add_child(_results_body)
-	_next_card_btn = _btn(panel, "DEAL THE NEXT CARD", Vector2(28, 392), Vector2(464, 58), func() -> void:
+	_next_card_btn = _btn(panel, "DEAL THE NEXT CARD", Vector2(28, 400), Vector2(464, 58), func() -> void:
 		_results.visible = false
 		Game.request_next_race()
 	)
 	_next_card_btn.custom_minimum_size = Vector2(464, 58)
 	_next_card_btn.add_theme_font_size_override("font_size", 20)
 	_next_card_btn.modulate = Color("e8d5a0")
-	_results_hint = _label(panel, "or it deals itself in 7", 15, Vector2(28, 458), MUTED)
+	_results_hint = _label(panel, "or it deals itself in 7", 15, Vector2(28, 468), MUTED)
 	_results_hint.size = Vector2(464, 36)
 	_results_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_results_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

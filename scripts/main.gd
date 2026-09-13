@@ -15,9 +15,15 @@ func _run_headless_smoke() -> void:
 	var cards := {"n": 0}
 	Game.results_ready.connect(func(payload: Dictionary) -> void:
 		cards.n += 1
+		var podium_bits: PackedStringArray = []
+		for row in Game.podium_from(payload.get("standings", [])):
+			podium_bits.append("%d:%s" % [int(row.get("place", 0)), str(row.get("name", ""))])
+		if podium_bits.is_empty():
+			push_error("SMOKE: podium empty after RESULTS")
 		print(
 			"SMOKE: card=", cards.n,
 			" winner=", payload.get("winner_name"),
+			" podium=", " / ".join(podium_bits),
 			" won=", payload.get("won"),
 			" pay=", payload.get("pay"),
 			" fried=", payload.get("fried_name"),
@@ -34,6 +40,16 @@ func _run_headless_smoke() -> void:
 	)
 	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
 		print("SMOKE: phase=", phase, " cards=", cards.n, " window=", Game.open_secs_left())
+		if phase == Game.Phase.RACE and cards.n == 0:
+			var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+			if manager and not manager.field.is_empty():
+				var bird: Snail = manager.field[0]
+				print(
+					"SMOKE: track_y=", Game.TRACK_SURFACE_Y,
+					" bird_y=", snappedf(bird.global_position.y, 0.001),
+					" lift=", Game.TRACK_STAND_LIFT,
+					" on_top=", bird.global_position.y >= Game.TRACK_SURFACE_Y - 0.01
+				)
 		if phase != Game.Phase.OPEN:
 			return
 		if cards.n >= 5:
