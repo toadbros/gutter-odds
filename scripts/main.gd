@@ -15,9 +15,15 @@ func _run_headless_smoke() -> void:
 	var cards := {"n": 0}
 	Game.results_ready.connect(func(payload: Dictionary) -> void:
 		cards.n += 1
+		var podium_bits: PackedStringArray = []
+		for row in Game.podium_from(payload.get("standings", [])):
+			podium_bits.append("%d:%s" % [int(row.get("place", 0)), str(row.get("name", ""))])
+		if podium_bits.is_empty():
+			push_error("SMOKE: podium empty after RESULTS")
 		print(
 			"SMOKE: card=", cards.n,
 			" winner=", payload.get("winner_name"),
+			" podium=", " / ".join(podium_bits),
 			" won=", payload.get("won"),
 			" pay=", payload.get("pay"),
 			" fried=", payload.get("fried_name"),

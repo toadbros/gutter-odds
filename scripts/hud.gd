@@ -73,6 +73,10 @@ var _window_clock: Label
 var _lock_btn: Button
 var _results_hint: Label
 var _next_card_btn: Button
+var _podium_names: Array[Label] = []
+var _podium_odds: Array[Label] = []
+var _podium_lines: Array[Label] = []
+var _results_title: Label
 
 
 func _ready() -> void:
@@ -281,20 +285,17 @@ func open_inspect(index: int) -> void:
 
 
 func open_results(payload: Dictionary) -> void:
+	_fill_podium(payload.get("standings", []))
+	if _results_title:
+		_results_title.text = "THE TIN PODIUM"
 	_results_body.clear()
 	_results_body.append_text("[b]%s[/b]\n" % payload.get("race_name", "The card"))
-	_results_body.append_text("[b]%s[/b] takes the ring.\n\n" % payload.get("winner_name", "A chicken"))
-	for row in payload.get("standings", []):
-		var o: Vector2i = row.get("odds", Vector2i(1, 1))
-		var yours := "  (yours)" if row.get("yours", false) else ""
-		_results_body.append_text("%d.  %s%s    %d/%d\n" % [int(row.get("place", 0)), row.get("name", ""), yours, o.x, o.y])
-	_results_body.append_text("\n")
+	_results_body.append_text("[b]%s[/b] takes the ring.\n" % payload.get("winner_name", "A chicken"))
 	var fried := str(payload.get("fried_name", ""))
 	if not fried.is_empty():
 		_results_body.append_text("[color=#e8a028]Last place: %s is extra crispy.[/color]\n" % fried)
 		if payload.get("fried_owned", false):
 			_results_body.append_text("The fryer paid %d caps for the carcass.\n" % ChickenStock.FRY_PAYOUT)
-		_results_body.append_text("\n")
 	if int(payload.get("purse_won", 0)) > 0:
 		_results_body.append_text("Your bird took the purse: [color=#c4e08a]+%d[/color]\n" % int(payload.get("purse_won", 0)))
 	if payload.get("wing_complete", false):
@@ -385,7 +386,7 @@ func _on_phase(phase: Game.Phase) -> void:
 				_help.text += "  ·  1 Hawk  2 Corn  3 Oil  4 Dog  5 Gun  6 Crowd"
 			set_camera_mode(true)
 		Game.Phase.RESULTS:
-			_phase.text = "PHOTO FINISH"
+			_phase.text = "THE TIN PODIUM"
 			_help.text = "DEAL THE NEXT CARD  ·  or it deals itself"
 			if _callout:
 				_callout.modulate.a = 0.0
@@ -1091,33 +1092,112 @@ func _build_inspect(root: Control) -> Control:
 
 
 func _build_results(root: Control) -> Control:
-	var panel := _panel(root, Vector2(520, 560))
-	panel.visible = false
-	var title := _label(panel, "THE CARD IS SETTLED", 22, Vector2(24, 16), BRASS)
-	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	title.offset_left = 24
-	title.offset_right = -24
-	title.offset_top = 14
-	title.offset_bottom = 48
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.10, 0.05, 0.03, 0.58)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.visible = false
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.add_child(overlay)
+	var panel := _panel(overlay, Vector2(720, 700))
+	_results_title = _label(panel, "THE TIN PODIUM", 28, Vector2(24, 12), BRASS)
+	_results_title.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_results_title.offset_left = 24
+	_results_title.offset_right = -24
+	_results_title.offset_top = 10
+	_results_title.offset_bottom = 48
+	_results_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var sub := _label(panel, "1st drinks. 2nd almost. 3rd still has feathers.", 15, Vector2(24, 46), MUTED)
+	sub.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	sub.offset_left = 24
+	sub.offset_right = -24
+	sub.offset_top = 46
+	sub.offset_bottom = 70
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_podium(panel)
 	_results_body = RichTextLabel.new()
 	_results_body.bbcode_enabled = true
-	_results_body.position = Vector2(28, 56)
-	_results_body.size = Vector2(464, 320)
+	_results_body.position = Vector2(36, 360)
+	_results_body.size = Vector2(648, 150)
 	_results_body.add_theme_color_override("default_color", INK)
+	_results_body.scroll_active = false
 	panel.add_child(_results_body)
-	_next_card_btn = _btn(panel, "DEAL THE NEXT CARD", Vector2(28, 392), Vector2(464, 58), func() -> void:
+	_next_card_btn = _btn(panel, "DEAL THE NEXT CARD", Vector2(36, 526), Vector2(648, 58), func() -> void:
 		_results.visible = false
 		Game.request_next_race()
 	)
-	_next_card_btn.custom_minimum_size = Vector2(464, 58)
+	_next_card_btn.custom_minimum_size = Vector2(648, 58)
 	_next_card_btn.add_theme_font_size_override("font_size", 20)
 	_next_card_btn.modulate = Color("e8d5a0")
-	_results_hint = _label(panel, "or it deals itself in 7", 15, Vector2(28, 458), MUTED)
-	_results_hint.size = Vector2(464, 36)
+	_results_hint = _label(panel, "or it deals itself in 7", 15, Vector2(36, 592), MUTED)
+	_results_hint.size = Vector2(648, 36)
 	_results_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_results_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	return panel
+	return overlay
+
+
+func _build_podium(panel: Control) -> void:
+	_podium_names.clear()
+	_podium_odds.clear()
+	_podium_lines.clear()
+	var order := [2, 1, 3]
+	var heights := [96.0, 138.0, 78.0]
+	var colors := [Color("8a8e86"), Color("e8c03a"), Color("8a5a28")]
+	var titles := ["ALMOST FAMOUS", "ATE THE FIELD", "STILL FEATHERED"]
+	var xs := [48.0, 260.0, 472.0]
+	var floor_y := 338.0
+	for i in 3:
+		var place: int = order[i]
+		var x: float = xs[i]
+		var h: float = heights[i]
+		var block := ColorRect.new()
+		block.color = colors[i]
+		block.position = Vector2(x, floor_y - h)
+		block.size = Vector2(200, h)
+		panel.add_child(block)
+		var rim := ColorRect.new()
+		rim.color = Color(0.12, 0.07, 0.04, 0.55)
+		rim.position = Vector2(x, floor_y - 10.0)
+		rim.size = Vector2(200, 10)
+		panel.add_child(rim)
+		var num := _label(block, str(place), 52 if place == 1 else 40, Vector2(0, 8), Color("1a120e"))
+		num.size = Vector2(200, 56)
+		num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var name_l := _label(panel, "—", 20 if place == 1 else 17, Vector2(x, 74), INK)
+		name_l.size = Vector2(200, 36)
+		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var odds_l := _label(panel, "", 16, Vector2(x, 110), BRASS)
+		odds_l.size = Vector2(200, 22)
+		odds_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var line_l := _label(panel, titles[i], 13, Vector2(x, 132), MUTED)
+		line_l.size = Vector2(200, 22)
+		line_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_podium_names.append(name_l)
+		_podium_odds.append(odds_l)
+		_podium_lines.append(line_l)
+
+
+func _fill_podium(standings: Array) -> void:
+	var order := [2, 1, 3]
+	var titles := ["ALMOST FAMOUS", "ATE THE FIELD", "STILL FEATHERED"]
+	var by_place := {}
+	for row in Game.podium_from(standings):
+		by_place[int(row.get("place", 0))] = row
+	for i in mini(3, _podium_names.size()):
+		var place: int = order[i]
+		var row: Dictionary = by_place.get(place, {})
+		if row.is_empty():
+			_podium_names[i].text = "—"
+			_podium_odds[i].text = ""
+			_podium_lines[i].text = titles[i]
+			continue
+		var name := str(row.get("name", "Chicken"))
+		if row.get("yours", false):
+			name += "  · YOURS"
+		_podium_names[i].text = name
+		var o: Vector2i = row.get("odds", Vector2i(1, 1))
+		_podium_odds[i].text = "%d/%d" % [o.x, o.y]
+		_podium_lines[i].text = titles[i]
 
 
 func _build_coop(root: Control) -> Control:

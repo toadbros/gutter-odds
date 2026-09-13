@@ -183,7 +183,7 @@ static func build_fried_chicken(model: Node3D) -> void:
 	mesh(model, box(Vector3(0.18, 0.03, 0.22)), mat(Color("e8c03a"), 0.55), Vector3(0.12, 0.08, 0.02))
 
 
-static func oval_point(t: float, rx: float, rz: float, y: float = 0.22) -> Vector3:
+static func oval_point(t: float, rx: float, rz: float, y: float = 0.45) -> Vector3:
 	var a := t * TAU
 	return Vector3(cos(a) * rx, y, sin(a) * rz)
 
