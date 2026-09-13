@@ -12,6 +12,9 @@ func _ready() -> void:
 		_print_roast_copy_smoke()
 		get_tree().quit()
 		return
+	if OS.get_cmdline_user_args().has("--mesh-smoke"):
+		_run_mesh_smoke()
+		return
 	_run_headless_smoke()
 
 
@@ -60,6 +63,9 @@ func _run_headless_smoke() -> void:
 	)
 	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
 		print("SMOKE: phase=", phase, " cards=", cards.n, " window=", Game.open_secs_left())
+		if phase == Game.Phase.OPEN or phase == Game.Phase.COUNTDOWN or phase == Game.Phase.RACE:
+			if cards.n == 0:
+				_audit_oval_meshes(str(phase))
 		if phase == Game.Phase.RACE and cards.n == 0:
 			var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
 			if manager and not manager.field.is_empty():
@@ -242,3 +248,59 @@ func _fire_chaos_order() -> void:
 		await get_tree().create_timer(0.12).timeout
 	print("SMOKE: yell order done")
 	get_tree().quit()
+
+
+func _run_mesh_smoke() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_audit_oval_meshes("BOOT")
+	var stadium := get_tree().get_first_node_in_group("stadium") as Stadium
+	if stadium == null:
+		push_error("SMOKE: no stadium for mesh audit")
+		get_tree().quit()
+		return
+	for condition in [
+		RaceChaos.Condition.FAIR_DIRT,
+		RaceChaos.Condition.DUST_BOWL,
+		RaceChaos.Condition.GREASE_DRIP,
+		RaceChaos.Condition.KERNEL_SCATTER,
+		RaceChaos.Condition.STORM_COMING,
+	]:
+		stadium.apply_card_condition(condition)
+		await get_tree().process_frame
+		_audit_oval_meshes("COND_%s" % RaceChaos.condition_name(condition))
+	for event in [
+		RaceChaos.LiveEvent.OIL_SLICK,
+		RaceChaos.LiveEvent.HAWK,
+		RaceChaos.LiveEvent.CORN_RAIN,
+		RaceChaos.LiveEvent.LOOSE_DOG,
+		RaceChaos.LiveEvent.FALSE_GUN,
+		RaceChaos.LiveEvent.CROWD_SQUEEZE,
+	]:
+		stadium.show_live_event(event, 20.0)
+		await get_tree().process_frame
+		_audit_oval_meshes("LIVE_%s" % RaceChaos.event_name(event))
+	stadium.clear_live_event()
+	print("SMOKE: mesh audit done")
+	get_tree().quit()
+
+
+func _audit_oval_meshes(label: String) -> void:
+	var stadium := get_tree().get_first_node_in_group("stadium") as Stadium
+	if stadium == null:
+		push_error("SMOKE: no stadium at %s" % label)
+		return
+	var all := stadium.list_oval_cylinders()
+	var bad := stadium.audit_oval_cylinders()
+	print("SMOKE: cyl_phase=", label, " count=", all.size(), " bad=", bad.size())
+	var skipped := 0
+	for line in all:
+		if line.contains("RailPost") or line.contains("FlagPole") or line.begins_with("MeshInstance3D "):
+			skipped += 1
+			continue
+		print("SMOKE: cyl ", line)
+	print("SMOKE: cyl skipped_props=", skipped)
+	for line in bad:
+		push_error("SMOKE: giant cylinder %s @ %s" % [line, label])
+	if bad.is_empty():
+		print("SMOKE: oval cylinders clean @ ", label)
