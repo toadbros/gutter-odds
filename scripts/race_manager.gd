@@ -996,8 +996,9 @@ func _event_mark() -> float:
 	var leader := get_leader()
 	var lead_d := leader.distance if leader else track_length * 0.4
 	if live_event == RaceChaos.LiveEvent.OIL_SLICK:
-		return clampf(lead_d + 0.35, track_length * 0.12, track_length * 0.84)
-	return clampf(lead_d + randf_range(-0.25, 0.55), track_length * 0.12, track_length * 0.84)
+		# Sit the slick on whoever is actually leading, even after a dump-back.
+		return clampf(lead_d, 0.05, track_length * 0.88)
+	return clampf(lead_d + randf_range(-0.12, 0.22), 0.05, track_length * 0.88)
 
 
 func _strike_live_event() -> String:
