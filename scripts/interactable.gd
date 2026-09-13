@@ -31,7 +31,7 @@ func get_prompt() -> String:
 			return "Buy the box seats  ·  %d caps" % Game.VIP_COST
 		"bell":
 			if Game.phase == Game.Phase.OPEN:
-				return "Ring the bell  ·  start the race"
+				return "Lock the window  ·  ring the bell"
 			return "The bell already sang"
 		"coop":
 			return "Open your coop"

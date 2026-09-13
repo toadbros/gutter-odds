@@ -28,6 +28,8 @@ const TRACK_RX := 15.0
 const TRACK_RZ := 10.0
 const TRACK_WIDTH := 4.2
 const COUNT_BEAT := 1.15
+const OPEN_WINDOW := 32.0
+const RESULTS_BEAT := 7.0
 
 var phase: Phase = Phase.MENU
 var bottlecaps: int = STARTING_CAPS
@@ -35,6 +37,8 @@ var vip_owned: bool = false
 var bet_index: int = -1
 var bet_amount: int = 0
 var countdown: float = 0.0
+var open_clock: float = 0.0
+var results_clock: float = 0.0
 var _count_shown: int = -1
 var ui_open: bool = false
 var last_results: Dictionary = {}
@@ -56,15 +60,15 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_announce_cd = maxf(_announce_cd - delta, 0.0)
-	if phase != Phase.COUNTDOWN:
-		return
-	countdown -= delta
-	var shown := 0 if countdown <= 0.0 else clampi(int(ceil(countdown / COUNT_BEAT)), 0, 3)
-	if shown != _count_shown:
-		_count_shown = shown
-		countdown_tick.emit(shown)
-	if countdown <= 0.0 and not NetPlay.is_client():
-		_start_race()
+	match phase:
+		Phase.OPEN:
+			_tick_open_window(delta)
+		Phase.COUNTDOWN:
+			_tick_countdown(delta)
+		Phase.RESULTS:
+			_tick_results_beat(delta)
+		_:
+			pass
 
 
 func is_sitting() -> bool:
@@ -137,12 +141,15 @@ func new_round() -> void:
 	bet_amount = 0
 	bet_index = -1
 	entered_id = ""
+	last_results = {}
 	if not _first_card:
 		_wear_coop()
 	if not NetPlay.is_client():
 		NetPlay.entries.clear()
 	bet_changed.emit()
 	_roll_market()
+	open_clock = OPEN_WINDOW
+	results_clock = 0.0
 	_set_phase(Phase.OPEN)
 	get_tree().call_group("race_manager", "deal_field")
 	get_tree().call_group("race_director", "deactivate")
@@ -187,6 +194,8 @@ func pack_meet() -> Dictionary:
 		"phase": int(phase),
 		"meet_index": meet_index,
 		"countdown": countdown if phase == Phase.COUNTDOWN else 0.0,
+		"open_clock": open_clock,
+		"results_clock": results_clock,
 		"first_card": _first_card,
 		"card_condition": int(chaos.get("card_condition", 0)),
 		"event_id": int(chaos.get("event_id", 0)),
@@ -199,6 +208,8 @@ func pack_meet() -> Dictionary:
 func apply_meet(payload: Dictionary) -> void:
 	meet_index = int(payload.get("meet_index", meet_index))
 	_first_card = bool(payload.get("first_card", _first_card))
+	open_clock = float(payload.get("open_clock", open_clock))
+	results_clock = float(payload.get("results_clock", results_clock))
 	var next_phase: Phase = int(payload.get("phase", phase)) as Phase
 	var prev := phase
 	# Roster / field sync mid-race must not drop survivors back into countdown residue.
@@ -226,10 +237,8 @@ func apply_meet(payload: Dictionary) -> void:
 			get_tree().call_group("race_director", "activate")
 			get_tree().call_group("race_manager", "move_to_gates")
 	elif next_phase == Phase.RACE:
-		if prev == Phase.COUNTDOWN:
-			get_tree().call_group("race_manager", "start_race")
-		elif prev != Phase.RACE:
-			get_tree().call_group("race_director", "activate")
+		get_tree().call_group("race_director", "activate")
+		if prev != Phase.RACE:
 			get_tree().call_group("race_manager", "start_race")
 	elif next_phase == Phase.RESULTS:
 		if prev != Phase.RESULTS:
@@ -536,21 +545,29 @@ func ring_the_bell() -> void:
 		return
 	if phase != Phase.OPEN:
 		return
+	var slammed := open_clock <= 0.05
+	open_clock = 0.0
 	_set_phase(Phase.COUNTDOWN)
 	countdown = COUNT_BEAT * 3.0
 	_count_shown = 3
 	countdown_tick.emit(3)
 	get_tree().call_group("race_manager", "move_to_gates")
 	get_tree().call_group("race_director", "activate")
+	if slammed:
+		toast.emit("Window's slammed. They're lining up.")
+	else:
+		toast.emit("Bell's rung. Slips are locked.")
 	NetPlay.broadcast_meet()
 
 
 func on_race_finished(winner_index: int, standings: Array) -> void:
 	if phase != Phase.RACE:
 		return
+	results_clock = RESULTS_BEAT
 	_set_phase(Phase.RESULTS)
 	get_tree().call_group("race_director", "deactivate")
 	var payload := _settle_card(winner_index, standings)
+	payload["results_clock"] = results_clock
 	last_results = payload
 	if NetPlay.is_server():
 		NetPlay.send_results(payload)
@@ -560,8 +577,9 @@ func on_race_finished(winner_index: int, standings: Array) -> void:
 
 
 func apply_network_results(payload: Dictionary) -> void:
-	if phase == Phase.RESULTS:
+	if phase == Phase.RESULTS and not last_results.is_empty():
 		return
+	results_clock = float(payload.get("results_clock", RESULTS_BEAT))
 	_set_phase(Phase.RESULTS)
 	get_tree().call_group("race_director", "deactivate")
 	_settle_local_from(payload)
@@ -613,9 +631,12 @@ func return_to_menu() -> void:
 
 
 func request_next_race() -> void:
+	if phase != Phase.RESULTS:
+		return
 	if NetPlay.is_client():
 		NetPlay.request_next_race()
 		return
+	toast.emit("Next card. Don't wander off.")
 	new_round()
 
 
@@ -745,7 +766,41 @@ func _settle_local_from(payload: Dictionary) -> void:
 	payload["bet_index"] = bet_index
 
 
+func _tick_open_window(delta: float) -> void:
+	if open_clock > 0.0:
+		open_clock = maxf(open_clock - delta, 0.0)
+	if open_clock <= 0.0 and not NetPlay.is_client():
+		ring_the_bell()
+
+
+func _tick_countdown(delta: float) -> void:
+	countdown -= delta
+	var shown := 0 if countdown <= 0.0 else clampi(int(ceil(countdown / COUNT_BEAT)), 0, 3)
+	if shown != _count_shown:
+		_count_shown = shown
+		countdown_tick.emit(shown)
+	if countdown <= 0.0 and not NetPlay.is_client():
+		_start_race()
+
+
+func _tick_results_beat(delta: float) -> void:
+	if results_clock > 0.0:
+		results_clock = maxf(results_clock - delta, 0.0)
+	if results_clock <= 0.0 and not NetPlay.is_client():
+		request_next_race()
+
+
+func open_secs_left() -> int:
+	return maxi(int(ceil(open_clock)), 0)
+
+
+func results_secs_left() -> int:
+	return maxi(int(ceil(results_clock)), 0)
+
+
 func _start_race() -> void:
+	if phase != Phase.COUNTDOWN:
+		return
 	_set_phase(Phase.RACE)
 	get_tree().call_group("race_manager", "start_race")
 	get_tree().call_group("race_director", "activate")

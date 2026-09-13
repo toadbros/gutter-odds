@@ -43,6 +43,8 @@ var _snap_t: float = 0.0
 var _npc_backup: Array[Dictionary] = []
 
 const SNAIL_SCENE := preload("res://scenes/snail.tscn")
+const RACE_HARD_CAP := 75.0
+const PHOTO_WAIT := 8.0
 
 
 func _ready() -> void:
@@ -532,21 +534,25 @@ func _slot_for_owner(peer_id: int, used: Dictionary) -> int:
 
 
 func _should_end() -> bool:
-	if _count_finished() >= field.size() and field.size() > 0:
+	if field.is_empty():
 		return true
-	if first_finish_at >= 0.0 and race_time - first_finish_at > 12.0:
-		# Rank anyone still running.
-		var leftover := field.filter(func(s: Snail) -> bool: return not s.finished)
-		leftover.sort_custom(func(a: Snail, b: Snail) -> bool: return a.distance > b.distance)
-		var next_place := _count_finished() + 1
-		for s in leftover:
-			s.finished = true
-			s.racing = false
-			s.place = next_place
-			s.finish_time = race_time
-			next_place += 1
+	if _count_finished() >= field.size():
 		return true
-	return false
+	var photo_up := first_finish_at >= 0.0 and race_time - first_finish_at > PHOTO_WAIT
+	var hard_cap := race_time >= RACE_HARD_CAP
+	if not photo_up and not hard_cap:
+		return false
+	# Rank anyone still running so the card always pays.
+	var leftover := field.filter(func(s: Snail) -> bool: return not s.finished)
+	leftover.sort_custom(func(a: Snail, b: Snail) -> bool: return a.distance > b.distance)
+	var next_place := _count_finished() + 1
+	for s in leftover:
+		s.finished = true
+		s.racing = false
+		s.place = next_place
+		s.finish_time = race_time
+		next_place += 1
+	return true
 
 
 func _count_finished() -> int:
