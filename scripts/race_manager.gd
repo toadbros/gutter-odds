@@ -122,6 +122,7 @@ func move_to_gates() -> void:
 		snail.racing = false
 		snail.lap_length = track_length
 		snail.reset_pose()
+		snail.net_smooth.clear()
 		_place_on_track(snail, true)
 
 
@@ -141,6 +142,7 @@ func start_race() -> void:
 		snail.racing = true
 		snail.finish_time = 0.0
 		snail.lap_length = track_length
+		snail.net_smooth.clear()
 		snail.kick_off()
 
 
@@ -252,7 +254,7 @@ func apply_snapshot(data: Variant) -> void:
 		snail.finish_time = float(row.get("finish_time", snail.finish_time))
 		if bool(row.get("fried", false)) and not snail.fried:
 			snail.make_fried()
-		_place_on_track(snail, false)
+		snail.push_net_track()
 	get_tree().call_group("hud", "set_standings", standings())
 
 
@@ -298,6 +300,7 @@ func apply_network_event(payload: Dictionary) -> void:
 
 func _process(delta: float) -> void:
 	if NetPlay.is_client():
+		_render_client_field()
 		return
 	if not racing:
 		return
@@ -324,6 +327,7 @@ func _process(delta: float) -> void:
 		_place_on_track(snail)
 	_call_the_race()
 	get_tree().call_group("hud", "set_standings", standings())
+	# Keep 20 Hz snapshots. Clients interpolate ~100 ms behind instead of raising send rate.
 	_snap_t += delta
 	if _snap_t >= 0.05:
 		_snap_t = 0.0
@@ -629,12 +633,26 @@ func _place_in_pen(snail: Snail, index: int) -> void:
 	snail.distance = 0.0
 
 
-func _place_on_track(snail: Snail, snap: bool = false) -> void:
+func _render_client_field() -> void:
+	if Game.phase != Game.Phase.RACE:
+		return
+	for snail in field:
+		var vis := snail.sample_net_track()
+		if vis.is_empty():
+			continue
+		snail.hint_visual_speed(float(vis.get("vel", snail.vel)))
+		# Snap to the interpolated curve sample; extra host-style lerp would add delay.
+		_place_on_track(snail, true, vis)
+
+
+func _place_on_track(snail: Snail, snap: bool = false, vis: Dictionary = {}) -> void:
 	var path := _path()
 	if path == null or path.curve == null:
 		return
 	var length := maxf(path.curve.get_baked_length(), 0.001)
-	var d := clampf(snail.distance, 0.0, length)
+	var d := clampf(float(vis.get("distance", snail.distance)), 0.0, length)
+	var groove := float(vis.get("groove", snail.groove))
+	var height := float(vis.get("height", snail.height))
 	var xf := path.curve.sample_baked_with_rotation(d, true)
 	var inward := Vector3(-xf.origin.x, 0.0, -xf.origin.z)
 	if inward.length_squared() < 0.0001:
@@ -642,8 +660,8 @@ func _place_on_track(snail: Snail, snap: bool = false) -> void:
 	else:
 		inward = inward.normalized()
 	var usable := Game.TRACK_WIDTH * 0.78
-	var origin := xf.origin + inward * (0.5 - snail.groove) * usable
-	origin.y = xf.origin.y + snail.height + Game.TRACK_STAND_LIFT
+	var origin := xf.origin + inward * (0.5 - groove) * usable
+	origin.y = xf.origin.y + height + Game.TRACK_STAND_LIFT
 	var ahead := path.curve.sample_baked(clampf(d + 0.22, 0.0, length))
 	var tangent := ahead - xf.origin
 	tangent.y = 0.0

@@ -72,6 +72,7 @@ var _track_yaw: float = 0.0
 var _have_track_target: bool = false
 var _shown_vel: float = 0.0
 var _gait_move: float = 0.0
+var net_smooth: NetSmooth = NetSmooth.new()
 
 
 func _ready() -> void:
@@ -156,6 +157,7 @@ func configure(data: Dictionary, number: int, lane_offset: float) -> void:
 			_label.text = "%s  ·  YOURS" % display_name
 	reset_pose()
 	leave_track_follow()
+	net_smooth.clear()
 	visible = true
 
 
@@ -254,6 +256,31 @@ func reset_pose() -> void:
 
 func leave_track_follow() -> void:
 	_have_track_target = false
+	net_smooth.clear()
+
+
+func push_net_track() -> void:
+	var last := net_smooth.latest()
+	if not last.is_empty() and absf(distance - float(last.get("distance", distance))) > 2.4:
+		net_smooth.clear()
+	var along := 0.0
+	if racing and not finished:
+		along = vel * line_speed()
+	net_smooth.push({
+		"distance": distance,
+		"groove": groove,
+		"height": height,
+		"vel": vel,
+		"along": along,
+	})
+
+
+func sample_net_track() -> Dictionary:
+	return net_smooth.sample()
+
+
+func hint_visual_speed(v: float) -> void:
+	_shown_vel = v
 
 
 func set_track_pose(origin: Vector3, yaw: float, snap: bool = false) -> void:
@@ -432,7 +459,7 @@ func _process(delta: float) -> void:
 		leave_track_follow()
 		_tick_yard(delta)
 		return
-	if _have_track_target:
+	if _have_track_target and not (NetPlay.is_client() and not net_smooth.is_empty()):
 		_follow_track(delta)
 	if not racing:
 		_gait_move = move_toward(_gait_move, 0.0, delta * 5.0)
@@ -446,7 +473,8 @@ func _process(delta: float) -> void:
 			_idle_on_track()
 			_animate_legs(false)
 		return
-	_shown_vel = move_toward(_shown_vel, vel, delta * 4.5)
+	if not (NetPlay.is_client() and not net_smooth.is_empty()):
+		_shown_vel = move_toward(_shown_vel, vel, delta * 4.5)
 	var want_move := 1.0 if _shown_vel > 0.16 else 0.0
 	if chaos_beat == ChaosBeat.PEBBLE or freeze_left > 0.0:
 		want_move = 0.0

@@ -9,6 +9,7 @@ func _ready() -> void:
 
 
 func _run_headless_smoke() -> void:
+	print("SMOKE: net_smooth=", "ok" if NetSmooth.smoke_check() else "FAIL")
 	var cards := {"n": 0}
 	Game.results_ready.connect(func(payload: Dictionary) -> void:
 		cards.n += 1

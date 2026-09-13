@@ -17,6 +17,7 @@ var binoculars: bool = false
 var local_controlled: bool = true
 var _pose_t: float = 0.0
 var _peer_id: int = 1
+var _pose_smooth: NetSmooth = NetSmooth.new()
 
 
 func _ready() -> void:
@@ -35,6 +36,7 @@ func _ready() -> void:
 func setup_remote(peer_id: int, player_name: String = "") -> void:
 	local_controlled = false
 	_peer_id = peer_id
+	_pose_smooth.clear()
 	add_to_group("net_puppet")
 	add_to_group("player_%d" % peer_id)
 	remove_from_group("player")
@@ -67,10 +69,50 @@ func setup_remote(peer_id: int, player_name: String = "") -> void:
 func apply_remote_pose(pos: Vector3, yaw: float, pitch: float) -> void:
 	if local_controlled:
 		return
-	global_position = global_position.lerp(pos, 0.45)
-	rotation.y = yaw
-	_pivot.rotation.x = pitch
+	var last := _pose_smooth.latest()
+	if not last.is_empty() and last.has("pos"):
+		if (last["pos"] as Vector3).distance_to(pos) > 3.5:
+			_pose_smooth.clear()
+			last = {}
+	var vel3 := Vector3.ZERO
+	if not last.is_empty() and last.has("pos"):
+		var dt := Time.get_ticks_usec() * 0.000001 - float(last.get("t", 0.0))
+		if dt > 0.001 and dt < 0.25:
+			vel3 = (pos - (last["pos"] as Vector3)) / dt
+	_pose_smooth.push({
+		"pos": pos,
+		"yaw": yaw,
+		"pitch": pitch,
+		"vel3": vel3,
+	})
 	_model.visible = true
+
+
+func _process(delta: float) -> void:
+	if local_controlled:
+		return
+	_follow_remote(delta)
+
+
+func _follow_remote(delta: float) -> void:
+	var pose := _pose_smooth.sample()
+	if pose.is_empty() or not pose.has("pos"):
+		return
+	var next: Vector3 = pose["pos"]
+	var step := global_position.distance_to(next)
+	global_position = next
+	rotation.y = float(pose.get("yaw", rotation.y))
+	if _pivot:
+		_pivot.rotation.x = float(pose.get("pitch", _pivot.rotation.x))
+	var spd := step / maxf(delta, 0.0001)
+	if spd > 0.35:
+		_bob += delta * clampf(spd, 0.0, 8.0) * 0.9
+	else:
+		_bob = move_toward(_bob, 0.0, delta * 6.0)
+	if _model:
+		_model.visible = true
+		_model.position.y = sin(_bob) * 0.03
+		_model.rotation.z = sin(_bob) * 0.04
 
 
 func prepare_despawn() -> void:
@@ -156,6 +198,7 @@ func _physics_process(delta: float) -> void:
 	_update_binoculars(delta)
 	if global_position.y < -6.0:
 		_snap_to_spawn()
+	# Keep 20 Hz pose send. Remote trainers interpolate ~100 ms behind.
 	_pose_t += delta
 	if _pose_t >= 0.05:
 		_pose_t = 0.0
