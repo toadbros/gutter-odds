@@ -292,11 +292,13 @@ func apply_chaos_state(payload: Dictionary) -> void:
 		get_tree().call_group("stadium", "show_live_event", live_event, event_at)
 	elif live_event == RaceChaos.LiveEvent.NONE and prev_event != RaceChaos.LiveEvent.NONE:
 		get_tree().call_group("stadium", "clear_live_event")
-	if card_condition != prev_cond and Game.phase == Game.Phase.OPEN:
-		Game.event_announce("%s. %s" % [
-			RaceChaos.condition_name(card_condition),
-			RaceChaos.condition_tell(card_condition),
-		], 0)
+	if card_condition != prev_cond:
+		if Game.phase == Game.Phase.OPEN:
+			Game.event_announce("%s. %s" % [
+				RaceChaos.condition_name(card_condition),
+				RaceChaos.condition_tell(card_condition),
+			], 0)
+		Game.bet_changed.emit()
 
 
 func apply_network_event(payload: Dictionary) -> void:
@@ -944,6 +946,28 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
+func force_card_condition(condition: int) -> void:
+	card_condition = condition
+	get_tree().call_group("stadium", "apply_card_condition", card_condition)
+	_refresh_board()
+	Game.bet_changed.emit()
+
+
+func stamp_tell_smoke_traits() -> void:
+	for snail in field:
+		var ids: Array[int] = []
+		match snail.archetype:
+			Snail.Archetype.CHAOS:
+				ids = ChickenStock.traits_from([ChickenStock.Trait.CORN_FIEND])
+			Snail.Archetype.SPRINTER:
+				ids = ChickenStock.traits_from([ChickenStock.Trait.GREASE_LEGS])
+			Snail.Archetype.STEADY:
+				ids = ChickenStock.traits_from([ChickenStock.Trait.HAWK_BLIND])
+		snail.traits = ids
+	_refresh_board()
+	Game.bet_changed.emit()
+
+
 func force_live_event(event: int) -> void:
 	if event == RaceChaos.LiveEvent.NONE or not racing:
 		return
@@ -1305,8 +1329,8 @@ func _refresh_board() -> void:
 	])
 	for snail in field:
 		var mark := " *" if snail.owner_id == NetPlay.local_id() and not snail.chicken_id.begins_with("npc_") else ""
-		lines.append("%s%s    %s    %s" % [snail.display_name, mark, snail.archetype_name(), snail.odds_text()])
-		lines.append("  %s" % snail.archetype_line())
+		lines.append("%s%s    %s    %s" % [snail.display_name, mark, snail.bet_card_title(), snail.odds_text()])
+		lines.append("  %s" % snail.card_tell())
 	board.text = "\n".join(lines)
 	var sched := get_tree().get_first_node_in_group("schedule_board") as Label3D
 	if sched:

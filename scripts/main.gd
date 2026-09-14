@@ -18,6 +18,9 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--feel-smoke"):
 		_run_feel_smoke()
 		return
+	if OS.get_cmdline_user_args().has("--tell-smoke"):
+		_run_tell_smoke()
+		return
 	_run_headless_smoke()
 
 
@@ -83,6 +86,7 @@ func _run_headless_smoke() -> void:
 			return
 		if cards.n == 0:
 			_print_bet_card_smoke()
+			_print_tell_card_smoke()
 		if cards.n >= 5:
 			return
 		get_tree().create_timer(0.12).timeout.connect(func() -> void:
@@ -170,17 +174,23 @@ func _print_bet_card_smoke() -> void:
 		var snail: Snail = manager.field[i]
 		var arch := snail.archetype_name()
 		var line := snail.archetype_line()
+		var tell := snail.card_tell()
+		var card := snail.bet_card_text()
 		var payload := snail.to_field_payload()
 		print(
 			"SMOKE: betcard=", i + 1,
 			" name=", snail.display_name,
 			" arch=", arch,
 			" line=", line,
+			" tell=", tell,
+			" quirks=", snail.quirk_line(),
 			" odds=", snail.odds_text(),
 			" payload_arch=", int(payload.get("archetype", -1))
 		)
 		if snail.display_name.is_empty() or line.is_empty() or not allowed.has(arch):
 			push_error("SMOKE: unreadable bet card #%d" % (i + 1))
+		if tell.is_empty() or not card.contains(arch) or not card.contains(tell):
+			push_error("SMOKE: missing T4/T1 card text #%d" % (i + 1))
 		if int(payload.get("archetype", -1)) != int(snail.archetype):
 			push_error("SMOKE: field payload drifted on #%d" % (i + 1))
 		seen[arch] = true
@@ -203,6 +213,142 @@ func _print_bet_card_smoke() -> void:
 		if hud.has_method("close_panels"):
 			hud.call("close_panels")
 	print("SMOKE: bet cards readable. types=", seen.keys())
+
+
+func _run_tell_smoke() -> void:
+	_assert_tell_copy()
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: tell phase=", phase)
+		if phase != Game.Phase.OPEN:
+			return
+		await _print_tell_card_smoke()
+		get_tree().quit()
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _print_tell_card_smoke() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	if manager == null:
+		push_error("SMOKE: no race manager for tells")
+		return
+	if manager.field.is_empty():
+		push_error("SMOKE: field empty before tell rows")
+		return
+	_assert_tell_copy()
+	var prev_cond := manager.card_condition
+	var saved: Array = []
+	for snail in manager.field:
+		saved.append(snail.traits.duplicate())
+	manager.stamp_tell_smoke_traits()
+	manager.force_card_condition(RaceChaos.Condition.KERNEL_SCATTER)
+	var corn_hits := 0
+	var t4_hits := 0
+	print("SMOKE: force_condition=", RaceChaos.condition_name(manager.card_condition))
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		var row := snail.bet_card_text()
+		var payload := snail.to_field_payload()
+		var peer := RaceChaos.card_tell(
+			int(payload.get("archetype", -1)),
+			payload.get("traits", []),
+			int(manager.card_condition),
+			RaceChaos.LiveEvent.NONE
+		)
+		print("SMOKE: tell_row=", i + 1, " cond=Kernel Scatter text=", row.replace("\n", " | "))
+		if snail.archetype_line().is_empty() or not row.contains(snail.archetype_name()):
+			push_error("SMOKE: T4 archetype missing on tell row #%d" % (i + 1))
+		else:
+			t4_hits += 1
+		if snail.card_tell().is_empty():
+			push_error("SMOKE: empty tell on #%d" % (i + 1))
+		if peer != snail.card_tell():
+			push_error("SMOKE: host/client tell desync on #%d" % (i + 1))
+		if row.contains(RaceChaos.TELL_CHAOS_CORN) or row.contains(RaceChaos.TELL_HUNGRY_CORN):
+			corn_hits += 1
+	if corn_hits <= 0:
+		push_error("SMOKE: kernel card missing corn chemistry")
+	print("SMOKE: kernel chemistry rows=", corn_hits, " t4=", t4_hits)
+	manager.force_card_condition(RaceChaos.Condition.GREASE_DRIP)
+	var oil_hits := 0
+	print("SMOKE: force_condition=", RaceChaos.condition_name(manager.card_condition))
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		var row := snail.bet_card_text()
+		print("SMOKE: tell_row=", i + 1, " cond=Grease Drip text=", row.replace("\n", " | "))
+		if row.contains(RaceChaos.TELL_SPRINTER_OIL) or row.contains(RaceChaos.TELL_GREASE_LUCKY):
+			oil_hits += 1
+	if oil_hits <= 0:
+		push_error("SMOKE: grease card missing skillet chemistry")
+	print("SMOKE: grease chemistry rows=", oil_hits)
+	manager.force_card_condition(RaceChaos.Condition.STORM_COMING)
+	var hawk_blind_hits := 0
+	var late_hawk_hits := 0
+	print("SMOKE: force_condition=", RaceChaos.condition_name(manager.card_condition))
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		var row := snail.bet_card_text()
+		print("SMOKE: tell_row=", i + 1, " cond=Storm Coming text=", row.replace("\n", " | "))
+		if row.contains(RaceChaos.TELL_HAWK_BLIND):
+			hawk_blind_hits += 1
+		if row.contains(RaceChaos.TELL_LATE_HAWK):
+			late_hawk_hits += 1
+	if hawk_blind_hits <= 0:
+		push_error("SMOKE: storm card missing Hawk Blind chemistry")
+	if late_hawk_hits <= 0:
+		push_error("SMOKE: storm card missing Late hawk chemistry")
+	print("SMOKE: hawk_blind rows=", hawk_blind_hits, " late_hawk rows=", late_hawk_hits)
+	for i in manager.field.size():
+		manager.field[i].traits = ChickenStock.traits_from(saved[i])
+	manager.force_card_condition(prev_cond)
+	print("SMOKE: tell cards ok")
+
+
+func _assert_tell_copy() -> void:
+	var corn := RaceChaos.Condition.KERNEL_SCATTER
+	var oil := RaceChaos.Condition.GREASE_DRIP
+	var dust := RaceChaos.Condition.DUST_BOWL
+	var storm := RaceChaos.Condition.STORM_COMING
+	var fair := RaceChaos.Condition.FAIR_DIRT
+	var hungry: Array = [ChickenStock.Trait.CORN_FIEND]
+	var grease: Array = [ChickenStock.Trait.GREASE_LEGS]
+	var hawk_blind: Array = [ChickenStock.Trait.HAWK_BLIND]
+	_expect_tell(2, [], corn, 0, RaceChaos.TELL_CHAOS_CORN, "chaos_corn")
+	_expect_tell(1, hungry, corn, 0, RaceChaos.TELL_HUNGRY_CORN, "hungry_corn")
+	_expect_tell(0, [], oil, 0, RaceChaos.TELL_SPRINTER_OIL, "sprinter_oil")
+	_expect_tell(0, [], fair, RaceChaos.LiveEvent.FALSE_GUN, RaceChaos.TELL_SPRINTER_GUN, "sprinter_gun")
+	_expect_tell(1, [], dust, 0, RaceChaos.TELL_STEADY_DOG, "steady_dog")
+	_expect_tell(3, [], storm, 0, RaceChaos.TELL_LATE_HAWK, "late_hawk")
+	_expect_tell(1, hawk_blind, storm, 0, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_storm")
+	_expect_tell(0, hawk_blind, fair, RaceChaos.LiveEvent.HAWK, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_event")
+	_expect_tell(3, hawk_blind, storm, 0, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_over_late")
+	_expect_tell(1, hawk_blind, fair, 0, RaceChaos.TELL_STEADY, "hawk_blind_no_hawk")
+	_expect_tell(1, grease, oil, 0, RaceChaos.TELL_GREASE_LUCKY, "grease_lucky")
+	_expect_tell(1, hungry, fair, 0, RaceChaos.TELL_HUNGRY, "hungry_default")
+	_expect_tell(0, [], fair, 0, RaceChaos.TELL_SPRINTER, "sprinter_default")
+	_expect_tell(1, [], fair, 0, RaceChaos.TELL_STEADY, "steady_default")
+	_expect_tell(2, [], fair, 0, RaceChaos.TELL_CHAOS, "chaos_default")
+	_expect_tell(3, [], fair, 0, RaceChaos.TELL_LATE, "late_default")
+	_expect_tell(2, hungry, corn, 0, RaceChaos.TELL_CHAOS_CORN, "chaos_over_hungry")
+	_expect_tell(0, grease, oil, 0, RaceChaos.TELL_SPRINTER_OIL, "sprinter_over_grease")
+	var bird := {"archetype": 2, "traits": hungry}
+	var host := RaceChaos.card_tell(2, hungry, corn)
+	var peer := RaceChaos.card_tell(int(bird.get("archetype", -1)), bird.get("traits", []), corn)
+	print("SMOKE: tell_peer=", peer)
+	if host != peer or peer != RaceChaos.TELL_CHAOS_CORN:
+		push_error("SMOKE: 6p derived tell drifted")
+	print("SMOKE: tell copy ok")
+
+
+func _expect_tell(arch: int, traits: Array, condition: int, event: int, want: String, label: String) -> void:
+	var got := RaceChaos.card_tell(arch, traits, condition, event)
+	print("SMOKE: tell_", label, "=", got)
+	if got != want:
+		push_error("SMOKE: tell %s want [%s] got [%s]" % [label, want, got])
 
 
 func _run_feel_smoke() -> void:
