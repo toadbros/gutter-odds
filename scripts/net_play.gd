@@ -7,6 +7,8 @@ signal slips_changed
 
 const DEFAULT_PORT := 7777
 const MAX_PESTS := 6
+# W3-T1: ENet max_clients is guests, not the host. Five walk-overs + host = six.
+const JOIN_TIMEOUT := 8.0
 
 var status: String = "Solo barn"
 var entries: Dictionary = {}
@@ -16,6 +18,8 @@ var local_name: String = "Trainer"
 var host_port: int = DEFAULT_PORT
 var join_ip: String = "127.0.0.1"
 var _closing: bool = false
+var _pending: Dictionary = {}
+var _join_started_msec: int = 0
 
 
 func _ready() -> void:
@@ -24,6 +28,11 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected)
 	multiplayer.connection_failed.connect(_on_failed)
 	multiplayer.server_disconnected.connect(_on_server_gone)
+
+
+func _process(_delta: float) -> void:
+	_watch_join_timeout()
+	_watch_pending_hello()
 
 
 func is_online() -> bool:
@@ -36,6 +45,45 @@ func is_server() -> bool:
 
 func is_client() -> bool:
 	return is_online() and not multiplayer.is_server()
+
+
+func is_joining() -> bool:
+	if multiplayer.multiplayer_peer == null:
+		return false
+	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTING
+
+
+func guest_slots() -> int:
+	return maxi(MAX_PESTS - 1, 1)
+
+
+func occupied_seats() -> int:
+	return seat_count() + _pending.size()
+
+
+func can_admit(peer_id: int = 0) -> bool:
+	if peer_id > 0 and roster.has(peer_id):
+		return true
+	var occupied := occupied_seats()
+	if peer_id > 0 and _pending.has(peer_id):
+		return occupied <= MAX_PESTS
+	return occupied < MAX_PESTS
+
+
+func unique_seat_name(text: String, peer_id: int) -> String:
+	var base := sanitize_name(text)
+	var taken: Dictionary = {}
+	for pid in roster.keys():
+		if int(pid) == peer_id:
+			continue
+		taken[str(roster[pid].get("name", ""))] = true
+	if not taken.has(base):
+		return base
+	for n in range(2, 100):
+		var candidate := "%s %d" % [base, n]
+		if not taken.has(candidate):
+			return candidate
+	return "%s %d" % [base, peer_id]
 
 
 func local_id() -> int:
@@ -110,13 +158,14 @@ func host_table(player_name: String, port: int = DEFAULT_PORT) -> bool:
 	local_name = sanitize_name(player_name)
 	host_port = clamp_port(port)
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(host_port, MAX_PESTS)
+	var err := peer.create_server(host_port, guest_slots())
 	if err != OK:
 		_set_status("Couldn't open port %d. Is it already in use?" % host_port)
 		return false
 	multiplayer.multiplayer_peer = peer
 	entries.clear()
 	roster.clear()
+	_pending.clear()
 	_seat(local_id(), local_name, true)
 	_set_status("Table open on %d. Wait for trainers, then start." % host_port)
 	Game.enter_lobby()
@@ -139,15 +188,18 @@ func join_table(player_name: String, ip: String, port: int = DEFAULT_PORT) -> bo
 		_set_status("Couldn't reach %s:%d." % [join_ip, host_port])
 		return false
 	multiplayer.multiplayer_peer = peer
+	_join_started_msec = Time.get_ticks_msec()
 	_set_status("Walking over to %s:%d..." % [join_ip, host_port])
 	return true
 
 
 func close() -> void:
 	_closing = true
+	_join_started_msec = 0
 	entries.clear()
 	roster.clear()
 	slips.clear()
+	_pending.clear()
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = null
@@ -356,21 +408,28 @@ func rpc_hello(player_name: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var pid := multiplayer.get_remote_sender_id()
+	_pending.erase(pid)
 	if Game.phase != Game.Phase.LOBBY:
 		_refuse_peer(pid, "Table's mid-meet. Join when they're back in lobby.")
 		return
-	if not roster.has(pid) and seat_count() >= MAX_PESTS:
+	if not can_admit(pid):
 		_refuse_peer(pid, "Table's full. Six trainers max.")
 		return
-	_seat(pid, sanitize_name(player_name), false)
+	_seat(pid, unique_seat_name(player_name, pid), false)
 	_broadcast_roster()
+	_set_status("%s sat down. %d / %d at the table." % [trainer_name(pid), seat_count(), MAX_PESTS])
 
 
 @rpc("any_peer", "call_remote", "reliable")
 func rpc_set_ready(ready: bool) -> void:
 	if not multiplayer.is_server():
 		return
-	_set_ready_flag(multiplayer.get_remote_sender_id(), ready)
+	if Game.phase != Game.Phase.LOBBY:
+		return
+	var pid := multiplayer.get_remote_sender_id()
+	if not roster.has(pid):
+		return
+	_set_ready_flag(pid, ready)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -568,18 +627,17 @@ func _on_peer_connected(id: int) -> void:
 		if Game.phase != Game.Phase.LOBBY:
 			_refuse_peer(id, "Table's mid-meet. Join when they're back in lobby.")
 			return
-		if seat_count() >= MAX_PESTS:
+		if not can_admit(id):
 			_refuse_peer(id, "Table's full. Six trainers max.")
 			return
-		if not roster.has(id):
-			_seat(id, "Trainer", false)
-		_broadcast_roster()
-		_set_status("%s sat down. %d at the table." % [trainer_name(id), seat_count()])
+		_pending[id] = Time.get_ticks_msec()
+		_set_status("Someone's walking over. %d / %d at the table." % [seat_count(), MAX_PESTS])
 	peers_changed.emit()
 	lobby_changed.emit()
 
 
 func _on_peer_disconnected(id: int) -> void:
+	_pending.erase(id)
 	entries.erase(id)
 	roster.erase(id)
 	slips.erase(id)
@@ -592,12 +650,16 @@ func _on_peer_disconnected(id: int) -> void:
 		_sync_entries()
 		_sync_slips()
 		_broadcast_roster()
-		_set_status("Someone walked off with their crate.")
+		if Game.phase == Game.Phase.LOBBY:
+			_set_status("Someone walked off. %d / %d at the table." % [seat_count(), MAX_PESTS])
+		else:
+			_set_status("Someone walked off with their crate.")
 	peers_changed.emit()
 	lobby_changed.emit()
 
 
 func _on_connected() -> void:
+	_join_started_msec = 0
 	_set_status("You're at the table. Wait for the host.")
 	rpc_id(1, "rpc_hello", local_name)
 	if Game.phase == Game.Phase.MENU:
@@ -678,8 +740,106 @@ func rpc_refused(reason: String) -> void:
 	_closing = true
 	Game.toast.emit(reason)
 	close()
+	_set_status(reason)
 	if Game.phase != Game.Phase.MENU:
 		Game.return_to_menu()
+		_set_status(reason)
+
+
+func _watch_join_timeout() -> void:
+	if _join_started_msec <= 0:
+		return
+	if not is_joining():
+		if is_online():
+			_join_started_msec = 0
+		return
+	if Time.get_ticks_msec() - _join_started_msec < int(JOIN_TIMEOUT * 1000.0):
+		return
+	close()
+	_set_status("Nobody answered. Check the IP, port, and that they're hosting.")
+
+
+func _watch_pending_hello() -> void:
+	if not is_server() or _pending.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	var cutoff := int(JOIN_TIMEOUT * 1000.0)
+	var expired: Array = []
+	for pid in _pending.keys():
+		if now - int(_pending[pid]) >= cutoff:
+			expired.append(int(pid))
+	for pid in expired:
+		_pending.erase(pid)
+		_refuse_peer(pid, "Took too long to sit down.")
+
+
+func smoke_check() -> bool:
+	var saved_roster := roster.duplicate(true)
+	var saved_pending := _pending.duplicate(true)
+	var saved_status := status
+	var ok := _smoke_lobby_rules()
+	roster = saved_roster
+	_pending = saved_pending
+	status = saved_status
+	return ok
+
+
+func _smoke_lobby_rules() -> bool:
+	roster.clear()
+	_pending.clear()
+	if guest_slots() != 5:
+		return false
+	if MAX_PESTS != 6:
+		return false
+	if JOIN_TIMEOUT < 5.0:
+		return false
+	_seat(1, "Lance", true)
+	if unique_seat_name("Lance", 2) != "Lance 2":
+		return false
+	if unique_seat_name("Lance", 1) != "Lance":
+		return false
+	if unique_seat_name("  ", 2) != "Trainer":
+		return false
+	roster[3] = {"name": "Trainer", "ready": false}
+	if unique_seat_name("Trainer", 2) != "Trainer 2":
+		return false
+	roster.clear()
+	_pending.clear()
+	_seat(1, "Host", true)
+	if not can_admit(2):
+		return false
+	for pid in range(2, 7):
+		_pending[pid] = 0
+	if can_admit(7):
+		return false
+	if occupied_seats() != 6:
+		return false
+	_pending.erase(6)
+	if not can_admit(6):
+		return false
+	roster.clear()
+	_pending.clear()
+	for i in 6:
+		_seat(i + 1, "Seat%d" % (i + 1), true)
+	if seat_count() != 6:
+		return false
+	if can_admit(99):
+		return false
+	if not everyone_ready():
+		return false
+	roster[2]["ready"] = false
+	if everyone_ready():
+		return false
+	roster[2]["ready"] = true
+	roster[1]["ready"] = false
+	if not everyone_ready():
+		return false
+	roster.erase(6)
+	if not can_admit(6):
+		return false
+	roster.clear()
+	_pending.clear()
+	return true
 
 
 func _set_status(text: String) -> void:

@@ -1041,6 +1041,8 @@ func _build_lobby(root: Control) -> Control:
 
 
 func _show_menu_home() -> void:
+	if NetPlay.is_joining():
+		NetPlay.close()
 	if _menu_home:
 		_menu_home.visible = true
 	if _menu_host:
@@ -1147,8 +1149,12 @@ func _fill_lobby() -> void:
 		_ready_btn.text = "Unready" if NetPlay.is_ready() else "Ready up"
 	if _start_btn:
 		_start_btn.visible = NetPlay.is_server()
-		_start_btn.text = "Start the meet"
-		_start_btn.disabled = not NetPlay.everyone_ready()
+		if NetPlay.everyone_ready():
+			_start_btn.text = "Start the meet"
+			_start_btn.disabled = false
+		else:
+			_start_btn.text = "Waiting on ready"
+			_start_btn.disabled = true
 
 
 func _build_pause(root: Control) -> Control:
