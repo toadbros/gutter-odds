@@ -34,8 +34,7 @@ func _ready() -> void:
 		_run_rare_smoke()
 		return
 	if OS.get_cmdline_user_args().has("--lobby-smoke"):
-		_assert_lobby_table()
-		get_tree().quit()
+		_run_lobby_smoke()
 		return
 	_run_headless_smoke()
 
@@ -406,6 +405,153 @@ func _assert_lobby_table() -> void:
 	print("SMOKE: guest_slots=", NetPlay.guest_slots(), " cap=", NetPlay.MAX_PESTS, " timeout=", NetPlay.JOIN_TIMEOUT)
 	if not ok:
 		push_error("SMOKE: 6p lobby table checks failed")
+
+
+func _run_lobby_smoke() -> void:
+	print("SMOKE: net_smooth=", "ok" if NetSmooth.smoke_check() else "FAIL")
+	_assert_lobby_table()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not NetPlay.host_table("Seat1", 17777):
+		push_error("SMOKE: host_table failed: %s" % NetPlay.status)
+		get_tree().quit(1)
+		return
+	for i in range(2, 7):
+		NetPlay._seat(i, "Seat%d" % i, i != 6)
+	if NetPlay.seat_count() != 6 or NetPlay.everyone_ready():
+		push_error("SMOKE: 6-seat fill/ready-gate drifted")
+		get_tree().quit(1)
+		return
+	NetPlay._on_peer_disconnected(6)
+	print("SMOKE: mid-lobby drop seats=", NetPlay.seat_count(), " ready=", NetPlay.everyone_ready())
+	if NetPlay.seat_count() != 5 or NetPlay.roster.has(6) or not NetPlay.everyone_ready():
+		push_error("SMOKE: mid-lobby drop did not free the seat / ready-gate")
+		get_tree().quit(1)
+		return
+	if Game.phase != Game.Phase.LOBBY:
+		push_error("SMOKE: mid-lobby drop left lobby")
+		get_tree().quit(1)
+		return
+	NetPlay._awaiting_seat = true
+	NetPlay._closing = false
+	NetPlay._on_server_gone()
+	print("SMOKE: join_denied=", NetPlay.status, " phase=", Game.phase)
+	if NetPlay.status != NetPlay.JOIN_DENIED or Game.phase != Game.Phase.MENU:
+		push_error("SMOKE: join-denied toast drifted")
+		get_tree().quit(1)
+		return
+	await get_tree().create_timer(0.05).timeout
+	if not NetPlay.host_table("Seat1", 17777):
+		push_error("SMOKE: rehost failed: %s" % NetPlay.status)
+		get_tree().quit(1)
+		return
+	for i in range(2, 7):
+		NetPlay._seat(i, "Seat%d" % i, true)
+	NetPlay.request_start()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if Game.phase != Game.Phase.OPEN:
+		push_error("SMOKE: 6-seat start did not open the meet")
+		get_tree().quit(1)
+		return
+	Game.place_bet(0, 10)
+	Game.ring_the_bell()
+	Game.countdown = 0.05
+	var waited := 0.0
+	while Game.phase != Game.Phase.RACE and waited < 4.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	if Game.phase != Game.Phase.RACE:
+		push_error("SMOKE: never reached RACE")
+		get_tree().quit(1)
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await _smoke_mid_race_peer_drop()
+	NetPlay.close()
+	print("SMOKE: lobby ok")
+	get_tree().quit(0)
+
+
+func _smoke_mid_race_peer_drop() -> void:
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	if manager == null or not manager.racing:
+		push_error("SMOKE FAIL: race manager not live")
+		get_tree().quit(1)
+		return
+	var director := get_tree().get_first_node_in_group("race_director")
+	var snap_before := true
+	if director:
+		snap_before = bool(director.get("_snap"))
+	var before: Array[float] = []
+	var racing_before := 0
+	var ids_before: PackedStringArray = PackedStringArray()
+	for snail in manager.field:
+		before.append(snail.distance)
+		ids_before.append(snail.chicken_id)
+		if snail.racing:
+			racing_before += 1
+	var stray: Array[int] = []
+	var watch := func(seconds: int) -> void:
+		stray.append(seconds)
+	Game.countdown_tick.connect(watch)
+	var seats_before := NetPlay.seat_count()
+	NetPlay._on_peer_disconnected(6)
+	if NetPlay.roster.has(6) or NetPlay.seat_count() != seats_before - 1:
+		push_error("SMOKE FAIL: live drop did not free the seat")
+		get_tree().quit(1)
+		return
+	manager.apply_player_entries()
+	Game.apply_meet({
+		"phase": int(Game.Phase.COUNTDOWN),
+		"meet_index": Game.meet_index,
+		"countdown": Game.COUNT_BEAT,
+		"first_card": true,
+	})
+	await get_tree().create_timer(0.4).timeout
+	Game.countdown_tick.disconnect(watch)
+	if Game.phase != Game.Phase.RACE:
+		push_error("SMOKE FAIL: phase after drop=%s" % Game.phase)
+		get_tree().quit(1)
+		return
+	if not manager.racing:
+		push_error("SMOKE FAIL: manager stopped racing after drop")
+		get_tree().quit(1)
+		return
+	if not stray.is_empty():
+		push_error("SMOKE FAIL: countdown after drop %s" % str(stray))
+		get_tree().quit(1)
+		return
+	if director and bool(director.get("_snap")) and not snap_before:
+		push_error("SMOKE FAIL: race cam snapped after drop")
+		get_tree().quit(1)
+		return
+	var racing_after := 0
+	var moved := false
+	var rebuilt := false
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		if snail.racing:
+			racing_after += 1
+		if i < before.size() and snail.distance > before[i] + 0.02:
+			moved = true
+		if i < before.size() and snail.distance + 0.5 < before[i]:
+			rebuilt = true
+		if i < ids_before.size() and snail.chicken_id != ids_before[i] and not ids_before[i].is_empty():
+			rebuilt = true
+	if racing_after < maxi(racing_before - 1, 3):
+		push_error("SMOKE FAIL: birds stopped racing (%d)" % racing_after)
+		get_tree().quit(1)
+		return
+	if rebuilt:
+		push_error("SMOKE FAIL: live field rebuilt after drop")
+		get_tree().quit(1)
+		return
+	if not moved:
+		push_error("SMOKE FAIL: pack did not keep moving after drop")
+		get_tree().quit(1)
+		return
+	print("SMOKE: mid-race drop clean phase=RACE racing=%d ticks=[] cam_snap=%s" % [racing_after, str(bool(director.get("_snap")) if director else false)])
 
 
 func _assert_social_copy() -> void:
