@@ -33,11 +33,16 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--rare-smoke"):
 		_run_rare_smoke()
 		return
+	if OS.get_cmdline_user_args().has("--lobby-smoke"):
+		_assert_lobby_table()
+		get_tree().quit()
+		return
 	_run_headless_smoke()
 
 
 func _run_headless_smoke() -> void:
 	print("SMOKE: net_smooth=", "ok" if NetSmooth.smoke_check() else "FAIL")
+	_assert_lobby_table()
 	_assert_social_copy()
 	var cards := {"n": 0}
 	Game.results_ready.connect(func(payload: Dictionary) -> void:
@@ -393,6 +398,14 @@ func _run_social_smoke() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	Game.begin_night()
+
+
+func _assert_lobby_table() -> void:
+	var ok := NetPlay.smoke_check()
+	print("SMOKE: lobby_table=", "ok" if ok else "FAIL")
+	print("SMOKE: guest_slots=", NetPlay.guest_slots(), " cap=", NetPlay.MAX_PESTS, " timeout=", NetPlay.JOIN_TIMEOUT)
+	if not ok:
+		push_error("SMOKE: 6p lobby table checks failed")
 
 
 func _assert_social_copy() -> void:
