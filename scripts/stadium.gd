@@ -18,6 +18,8 @@ var _condition_sign: Label3D
 var _hawk: Node3D
 var _dog: Node3D
 var _hawk_shadow: Node3D
+var _raccoon: Node3D
+var _rocket: Node3D
 var _corn_mesh: BoxMesh
 var _corn_mat: StandardMaterial3D
 var _finish_fx: Node3D
@@ -457,6 +459,8 @@ func show_live_event(event: int, at_distance: float) -> void:
 	_hawk = null
 	_dog = null
 	_hawk_shadow = null
+	_raccoon = null
+	_rocket = null
 	_live_event = event
 	_live_t = 0.0
 	var length := _path_length()
@@ -476,6 +480,11 @@ func show_live_event(event: int, at_distance: float) -> void:
 			_hawk = _spawn_hawk(_live_at)
 			_hawk_shadow = _spawn_hawk_shadow(_live_at)
 			_spawn_event_light(_live_at + Vector3(0, 5.0, 0), Color("8a2030"), 2.8, 14.0)
+		RaceChaos.LiveEvent.HAWK_DIVE:
+			_paint_sky(RaceChaos.Condition.STORM_COMING)
+			_hawk = _spawn_hawk(_live_at)
+			_hawk_shadow = _spawn_hawk_shadow(_live_at)
+			_spawn_event_light(_live_at + Vector3(0, 5.4, 0), Color("8a1020"), 3.6, 16.0)
 		RaceChaos.LiveEvent.LOOSE_DOG:
 			_dog = _spawn_dog(Vector3(6.4, 0.28, 0.0))
 			_spawn_event_light(Vector3(0, 2.2, 0), Color("8a5a28"), 2.2, 12.0)
@@ -483,6 +492,16 @@ func show_live_event(event: int, at_distance: float) -> void:
 			_spawn_gun_puff(Vector3(-10.0, 1.6, 16.4))
 		RaceChaos.LiveEvent.CROWD_SQUEEZE:
 			_spawn_crowd_lean()
+		RaceChaos.LiveEvent.RACCOON_SNIPER:
+			_raccoon = _spawn_raccoon(Vector3(-9.2, 0.22, 15.8))
+			_spawn_gun_puff(Vector3(-9.2, 1.45, 15.8))
+			_spawn_event_light(_live_at + Vector3(0, 1.6, 0), Color("6a4a28"), 2.6, 12.0)
+		RaceChaos.LiveEvent.LAWN_CHAIR:
+			_spawn_lawn_chairs(_live_at, frac)
+			_spawn_event_light(_live_at + Vector3(0, 2.4, 0), Color("b07a48"), 2.4, 12.0)
+		RaceChaos.LiveEvent.BOTTLE_ROCKET:
+			_rocket = _spawn_bottle_rocket(Vector3(0.0, 0.42, 0.0))
+			_spawn_event_light(Vector3(0, 2.2, 0), Color("f8e070"), 4.8, 14.0)
 
 
 func punch_pack(at: Vector3) -> void:
@@ -534,6 +553,8 @@ func clear_live_event() -> void:
 	_hawk = null
 	_dog = null
 	_hawk_shadow = null
+	_raccoon = null
+	_rocket = null
 	_clear_fx(_live_fx)
 	_paint_sky(_painted_condition if _painted_condition >= 0 else RaceChaos.Condition.FAIR_DIRT)
 
@@ -547,12 +568,16 @@ func _process(delta: float) -> void:
 		return
 	_live_t += delta
 	match _live_event:
-		RaceChaos.LiveEvent.CORN_RAIN:
+		RaceChaos.LiveEvent.CORN_RAIN, RaceChaos.LiveEvent.LAWN_CHAIR:
 			_tick_corn_rain(delta)
-		RaceChaos.LiveEvent.HAWK:
+		RaceChaos.LiveEvent.HAWK, RaceChaos.LiveEvent.HAWK_DIVE:
 			_tick_hawk()
 		RaceChaos.LiveEvent.LOOSE_DOG:
 			_tick_dog(delta)
+		RaceChaos.LiveEvent.RACCOON_SNIPER:
+			_tick_raccoon()
+		RaceChaos.LiveEvent.BOTTLE_ROCKET:
+			_tick_rocket(delta)
 
 
 func _paint_sky(condition: int) -> void:
@@ -749,17 +774,20 @@ func _spawn_hawk_shadow(at: Vector3) -> Node3D:
 func _tick_hawk() -> void:
 	if _hawk == null:
 		return
-	var dive := clampf(_live_t / 1.15, 0.0, 1.0)
-	var y := lerpf(7.2, 1.05, dive)
-	if _live_t > 1.2:
-		y = lerpf(1.05, 5.4, clampf((_live_t - 1.2) / 1.1, 0.0, 1.0))
-	var sweep := sin(_live_t * 2.1) * 2.4
-	_hawk.position = _live_at + Vector3(sweep, y, cos(_live_t * 1.6) * 1.4)
+	var dive_fast := _live_event == RaceChaos.LiveEvent.HAWK_DIVE
+	var dive := clampf(_live_t / (0.68 if dive_fast else 1.15), 0.0, 1.0)
+	var floor_y := 0.58 if dive_fast else 1.05
+	var y := lerpf(7.2, floor_y, dive)
+	var pull_at := 0.72 if dive_fast else 1.2
+	if _live_t > pull_at:
+		y = lerpf(floor_y, 6.2 if dive_fast else 5.4, clampf((_live_t - pull_at) / (0.95 if dive_fast else 1.1), 0.0, 1.0))
+	var sweep := sin(_live_t * (3.4 if dive_fast else 2.1)) * (1.05 if dive_fast else 2.4)
+	_hawk.position = _live_at + Vector3(sweep, y, cos(_live_t * (2.4 if dive_fast else 1.6)) * (0.7 if dive_fast else 1.4))
 	_hawk.rotation.z = -sweep * 0.12
-	_hawk.rotation.x = 0.55 if dive < 1.0 and _live_t < 1.2 else -0.15
+	_hawk.rotation.x = (0.95 if dive_fast else 0.55) if dive < 1.0 and _live_t < pull_at else -0.15
 	if _hawk_shadow:
 		_hawk_shadow.position = Vector3(_hawk.position.x, Game.TRACK_SURFACE_Y + 0.02, _hawk.position.z)
-		var wide := 2.6 if y < 2.2 else 1.6
+		var wide := (3.2 if dive_fast else 2.6) if y < 2.2 else 1.6
 		_hawk_shadow.scale = Vector3(wide, 1.0, wide)
 
 
@@ -799,6 +827,82 @@ func _spawn_gun_puff(at: Vector3) -> void:
 	var puff := _fx_disc(_live_fx, at, 0.55, 1.1, GutterLooks.mat(Color(0.85, 0.85, 0.8, 0.55), 0.95), 8)
 	puff.name = "GunPuff"
 	_spawn_event_light(at, Color("f0ead8"), 5.5, 9.0)
+
+
+func _spawn_raccoon(at: Vector3) -> Node3D:
+	var raccoon := Node3D.new()
+	raccoon.name = "RaccoonSniper"
+	raccoon.position = at
+	var fur := GutterLooks.mat(Color("6a5a48"), 0.82)
+	var mask := GutterLooks.mat(Color("1a1410"), 0.75)
+	var cream := GutterLooks.mat(Color("d8c8a8"), 0.7)
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.38, 0.32, 0.72)), fur, Vector3(0, 0.34, 0))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.30, 0.26, 0.30)), fur, Vector3(0, 0.48, -0.42))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.32, 0.10, 0.12)), mask, Vector3(0, 0.50, -0.50))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.08, 0.16, 0.08)), cream, Vector3(-0.10, 0.64, -0.40))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.08, 0.16, 0.08)), cream, Vector3(0.10, 0.64, -0.40))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.10, 0.10, 0.46)), fur, Vector3(0, 0.28, 0.48))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.06, 0.06, 0.22)), mask, Vector3(0, 0.28, 0.68))
+	_mesh_on(raccoon, GutterLooks.box(Vector3(0.06, 0.06, 0.42)), mask, Vector3(0.18, 0.40, -0.62))
+	for side in [-1.0, 1.0]:
+		_mesh_on(raccoon, GutterLooks.cyl(0.05, 0.22, 6), mask, Vector3(side * 0.12, 0.12, -0.18))
+		_mesh_on(raccoon, GutterLooks.cyl(0.05, 0.22, 6), mask, Vector3(side * 0.12, 0.12, 0.18))
+	_live_fx.add_child(raccoon)
+	return raccoon
+
+
+func _tick_raccoon() -> void:
+	if _raccoon == null:
+		return
+	var kick := 0.22 if _live_t < 0.42 else 0.04
+	_raccoon.rotation.y = sin(_live_t * 16.0) * kick
+	_raccoon.position.y = 0.22 + absf(sin(_live_t * 10.0)) * 0.05
+
+
+func _spawn_lawn_chairs(at: Vector3, frac: float) -> void:
+	var seat := GutterLooks.mat(Color("c4a070"), 0.7)
+	var frame := GutterLooks.mat(Color("6a4a28"), 0.65)
+	for i in 12:
+		var chair := Node3D.new()
+		chair.name = "LawnChair"
+		var around := _path_point(clampf(frac + randf_range(-0.10, 0.10), 0.04, 0.96))
+		chair.position = around + Vector3(randf_range(-2.2, 2.2), randf_range(3.2, 8.8), randf_range(-2.2, 2.2))
+		chair.rotation = Vector3(randf() * TAU, randf() * TAU, randf() * TAU)
+		chair.set_meta("fall", randf_range(4.4, 7.6))
+		chair.set_meta("spin", Vector3(randf_range(-4.0, 4.0), randf_range(-6.0, 6.0), randf_range(-4.0, 4.0)))
+		_mesh_on(chair, GutterLooks.box(Vector3(0.62, 0.06, 0.58)), seat, Vector3(0, 0.22, 0))
+		_mesh_on(chair, GutterLooks.box(Vector3(0.62, 0.36, 0.06)), seat, Vector3(0, 0.40, 0.26))
+		_mesh_on(chair, GutterLooks.box(Vector3(0.07, 0.40, 0.07)), frame, Vector3(-0.24, 0.02, -0.22))
+		_mesh_on(chair, GutterLooks.box(Vector3(0.07, 0.40, 0.07)), frame, Vector3(0.24, 0.02, -0.22))
+		_mesh_on(chair, GutterLooks.box(Vector3(0.07, 0.40, 0.07)), frame, Vector3(-0.24, 0.02, 0.22))
+		_mesh_on(chair, GutterLooks.box(Vector3(0.07, 0.40, 0.07)), frame, Vector3(0.24, 0.02, 0.22))
+		_live_fx.add_child(chair)
+	var scatter := at
+	scatter.y = Game.TRACK_SURFACE_Y + 0.06
+	_mesh_on(_live_fx, GutterLooks.box(Vector3(0.72, 0.08, 0.64)), seat, scatter + Vector3(0.4, 0.0, -0.3))
+
+
+func _spawn_bottle_rocket(at: Vector3) -> Node3D:
+	var rocket := Node3D.new()
+	rocket.name = "BottleRocket"
+	rocket.position = at
+	var stick := GutterLooks.mat(Color("8a6a38"), 0.7)
+	var head := GutterLooks.mat(Color("c42828"), 0.45, 0.0, Color("f8e070"), 1.8)
+	_mesh_on(rocket, GutterLooks.box(Vector3(0.07, 0.72, 0.07)), stick, Vector3(0, 0.36, 0))
+	_mesh_on(rocket, GutterLooks.box(Vector3(0.14, 0.18, 0.14)), head, Vector3(0, 0.78, 0))
+	_live_fx.add_child(rocket)
+	return rocket
+
+
+func _tick_rocket(delta: float) -> void:
+	if _rocket == null:
+		return
+	_rocket.position.y += 7.4 * delta
+	_rocket.rotation.z = sin(_live_t * 22.0) * 0.18
+	_rocket.rotation.x = cos(_live_t * 18.0) * 0.10
+	if _live_t > 0.82 and not _rocket.has_meta("popped"):
+		_rocket.set_meta("popped", true)
+		_spawn_gun_puff(_rocket.position + Vector3(0, 0.4, 0))
 
 
 func _spawn_crowd_lean() -> void:

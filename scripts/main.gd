@@ -30,6 +30,9 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--social-smoke"):
 		_run_social_smoke()
 		return
+	if OS.get_cmdline_user_args().has("--rare-smoke"):
+		_run_rare_smoke()
+		return
 	_run_headless_smoke()
 
 
@@ -336,6 +339,7 @@ func _assert_tell_copy() -> void:
 	_expect_tell(3, [], storm, 0, RaceChaos.TELL_LATE_HAWK, "late_hawk")
 	_expect_tell(1, hawk_blind, storm, 0, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_storm")
 	_expect_tell(0, hawk_blind, fair, RaceChaos.LiveEvent.HAWK, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_event")
+	_expect_tell(0, hawk_blind, fair, RaceChaos.LiveEvent.HAWK_DIVE, RaceChaos.TELL_HAWK_BLIND, "hawk_dive_blind")
 	_expect_tell(3, hawk_blind, storm, 0, RaceChaos.TELL_HAWK_BLIND, "hawk_blind_over_late")
 	_expect_tell(1, hawk_blind, fair, 0, RaceChaos.TELL_STEADY, "hawk_blind_no_hawk")
 	_expect_tell(1, grease, oil, 0, RaceChaos.TELL_GREASE_LUCKY, "grease_lucky")
@@ -405,8 +409,16 @@ func _assert_social_copy() -> void:
 		push_error("SMOKE: steady dog chemistry missing")
 	if not RaceChaos.has_live_chemistry(3, [], hawk):
 		push_error("SMOKE: late hawk chemistry missing")
+	if not RaceChaos.has_live_chemistry(3, [], RaceChaos.LiveEvent.HAWK_DIVE):
+		push_error("SMOKE: late hawk dive chemistry missing")
 	if not RaceChaos.has_live_chemistry(0, [ChickenStock.Trait.HAWK_BLIND], hawk):
 		push_error("SMOKE: hawk-blind chemistry missing")
+	if RaceChaos.has_live_chemistry(0, [], RaceChaos.LiveEvent.RACCOON_SNIPER):
+		push_error("SMOKE: raccoon is not a tell pair")
+	if RaceChaos.has_live_chemistry(1, [], RaceChaos.LiveEvent.LAWN_CHAIR):
+		push_error("SMOKE: lawn chair is not a tell pair")
+	if RaceChaos.has_live_chemistry(0, [], RaceChaos.LiveEvent.BOTTLE_ROCKET):
+		push_error("SMOKE: bottle rocket is not a tell pair")
 	if not RaceChaos.has_live_chemistry(0, [], bang):
 		push_error("SMOKE: sprinter gun chemistry missing")
 	if RaceChaos.has_live_chemistry(1, [], oil):
@@ -876,6 +888,125 @@ func _fire_chaos_order() -> void:
 	get_tree().quit()
 
 
+func _run_rare_smoke() -> void:
+	_assert_rare_rules()
+	var yells: Array[String] = []
+	var flips := 0
+	var beats := 0
+	Game.event_callout.connect(func(text: String, event_id: int) -> void:
+		var title := RaceChaos.event_title(event_id)
+		yells.append("%s:%s" % [title, text])
+		print("SMOKE: rare_yell=", title, " line=", text)
+		if RaceChaos.is_rare(event_id):
+			if title.is_empty() or RaceChaos.event_rank(event_id) != 1:
+				push_error("SMOKE: rare yell missing or not rank-1")
+	)
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: rare phase=", phase)
+		if phase == Game.Phase.OPEN:
+			get_tree().create_timer(0.08).timeout.connect(func() -> void:
+				if Game.phase == Game.Phase.OPEN:
+					Game.place_bet(0, 5)
+					Game.ring_the_bell()
+			)
+		elif phase == Game.Phase.RACE:
+			get_tree().create_timer(0.18).timeout.connect(_fire_rare_order)
+		elif phase == Game.Phase.RESULTS:
+			print("SMOKE: rare results still live yells=", yells.size(), " flips=", flips, " beats=", beats)
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _assert_rare_rules() -> void:
+	if is_equal_approx(RaceChaos.RARE_CHANCE, 1.0 / 12.0) == false:
+		push_error("SMOKE: rare chance drifted from 1/12")
+	if RaceChaos.roll_rare(true, false) != RaceChaos.LiveEvent.NONE:
+		push_error("SMOKE: night-used rare should stay quiet")
+	if RaceChaos.roll_rare(false, true) != RaceChaos.LiveEvent.NONE:
+		push_error("SMOKE: jewel cards should skip rares")
+	var used: Array = []
+	for condition in [
+		RaceChaos.Condition.FAIR_DIRT,
+		RaceChaos.Condition.DUST_BOWL,
+		RaceChaos.Condition.GREASE_DRIP,
+		RaceChaos.Condition.KERNEL_SCATTER,
+		RaceChaos.Condition.STORM_COMING,
+	]:
+		for _i in 40:
+			var picked := RaceChaos.pick_live_event(condition, -1, used)
+			if RaceChaos.is_rare(picked):
+				push_error("SMOKE: commons pool leaked rare %s" % RaceChaos.event_name(picked))
+	var jewel := RaceChaos.pick_live_event(RaceChaos.Condition.FAIR_DIRT, 2, [])
+	if RaceChaos.is_rare(jewel):
+		push_error("SMOKE: jewel pick leaked a rare")
+	var hits := 0
+	for _i in 240:
+		if RaceChaos.is_rare(RaceChaos.roll_rare(false, false)):
+			hits += 1
+	print("SMOKE: rare_roll_hits=", hits, " /240")
+	if hits <= 0:
+		push_error("SMOKE: rare roll never hit in 240 tries")
+	var punch := RaceChaos.roast_punchline(RaceChaos.LiveEvent.RACCOON_SNIPER, "Quick Nickel", "Lance", 0)
+	print("SMOKE: rare_punch=", punch)
+	if punch.is_empty() or not punch.contains("raccoon"):
+		push_error("SMOKE: raccoon roast missing")
+	print("SMOKE: rare rules ok")
+
+
+func _fire_rare_order() -> void:
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	if manager == null:
+		push_error("SMOKE: no race manager")
+		get_tree().quit()
+		return
+	var order: Array[int] = [
+		RaceChaos.LiveEvent.RACCOON_SNIPER,
+		RaceChaos.LiveEvent.HAWK_DIVE,
+		RaceChaos.LiveEvent.LAWN_CHAIR,
+		RaceChaos.LiveEvent.BOTTLE_ROCKET,
+	]
+	if manager.field.size() >= 2:
+		var lead: Snail = manager.get_leader()
+		var chase: Snail = manager.field[0] if manager.field[0] != lead else manager.field[1]
+		if lead:
+			chase.distance = lead.distance - 0.08
+	var flips := 0
+	var beats := 0
+	for event in order:
+		var before: Dictionary = manager.feel_snapshot()
+		manager.force_live_event(event)
+		var after: Dictionary = manager.feel_snapshot()
+		var beat: Dictionary = after.get("beat", {})
+		var flipped := bool(beat.get("flipped", false)) or str(before.get("lead", "")) != str(after.get("lead", ""))
+		var dumped := absf(float(after.get("lead_d", 0.0)) - float(before.get("lead_d", 0.0))) > 0.04
+		var victim := str(beat.get("victim", ""))
+		if flipped:
+			flips += 1
+		if dumped or not victim.is_empty():
+			beats += 1
+		print(
+			"SMOKE: rare_forced=", RaceChaos.event_name(event),
+			" live=", manager.live_event,
+			" lead=", before.get("lead"), "->", after.get("lead"),
+			" flip=", flipped,
+			" dump=", snappedf(float(after.get("lead_d", 0.0)) - float(before.get("lead_d", 0.0)), 0.01),
+			" victim=", victim
+		)
+		if victim.is_empty() and not dumped:
+			push_error("SMOKE: %s had no body beat" % RaceChaos.event_name(event))
+		if RaceChaos.event_title(event).is_empty():
+			push_error("SMOKE: %s missing yell title" % RaceChaos.event_name(event))
+		await get_tree().create_timer(0.10).timeout
+	if beats < order.size():
+		push_error("SMOKE: expected a body beat on every rare")
+	if flips <= 0:
+		push_error("SMOKE: rares never changed the lead")
+	print("SMOKE: rare order done flips=", flips, " beats=", beats)
+	get_tree().quit()
+
+
 func _run_mesh_smoke() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -902,6 +1033,10 @@ func _run_mesh_smoke() -> void:
 		RaceChaos.LiveEvent.LOOSE_DOG,
 		RaceChaos.LiveEvent.FALSE_GUN,
 		RaceChaos.LiveEvent.CROWD_SQUEEZE,
+		RaceChaos.LiveEvent.RACCOON_SNIPER,
+		RaceChaos.LiveEvent.HAWK_DIVE,
+		RaceChaos.LiveEvent.LAWN_CHAIR,
+		RaceChaos.LiveEvent.BOTTLE_ROCKET,
 	]:
 		stadium.show_live_event(event, 20.0)
 		await get_tree().process_frame
