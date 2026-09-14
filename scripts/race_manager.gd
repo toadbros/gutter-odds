@@ -212,7 +212,7 @@ func broadcast_now() -> void:
 func apply_network_field(payload: Array) -> void:
 	if NetPlay.is_server():
 		return
-	var live := Game.phase == Game.Phase.RACE or Game.phase == Game.Phase.COUNTDOWN
+	var live := Game.is_live_card()
 	if not live:
 		racing = false
 	_ensure_snails()
@@ -253,6 +253,7 @@ func apply_snapshot(data: Variant) -> void:
 		var packed: Variant = data.get("birds", [])
 		if packed is Array:
 			rows = packed
+	var recv_t := Time.get_ticks_usec() * 0.000001
 	for i in mini(rows.size(), field.size()):
 		var row: Dictionary = rows[i]
 		if not row is Dictionary:
@@ -272,7 +273,7 @@ func apply_snapshot(data: Variant) -> void:
 		snail.finish_time = float(row.get("finish_time", snail.finish_time))
 		if bool(row.get("fried", false)) and not snail.fried:
 			snail.make_fried()
-		snail.push_net_track()
+		snail.push_net_track(recv_t)
 	get_tree().call_group("hud", "set_standings", standings())
 
 

@@ -238,11 +238,10 @@ func apply_meet(payload: Dictionary) -> void:
 	if is_sitting() and next_phase != Phase.MENU and next_phase != Phase.LOBBY:
 		begin_guest()
 	if next_phase == Phase.COUNTDOWN and prev != Phase.RACE and prev != Phase.RESULTS:
-		countdown = float(payload.get("countdown", COUNT_BEAT * 3.0))
-		var shown := 0 if countdown <= 0.0 else clampi(int(ceil(countdown / COUNT_BEAT)), 0, 3)
-		var entering := prev != Phase.COUNTDOWN
-		_count_shown = shown
-		if entering:
+		if prev != Phase.COUNTDOWN:
+			countdown = float(payload.get("countdown", COUNT_BEAT * 3.0))
+			var shown := 0 if countdown <= 0.0 else clampi(int(ceil(countdown / COUNT_BEAT)), 0, 3)
+			_count_shown = shown
 			countdown_tick.emit(shown)
 	if next_phase != Phase.MENU and next_phase != Phase.LOBBY:
 		_set_phase(next_phase)

@@ -114,4 +114,43 @@ static func smoke_check() -> bool:
 	if absf(float(held.get("distance", -1.0)) - 0.5) > 0.001:
 		return false
 	var coast := buf.sample(1.20)
-	return absf(float(coast.get("distance", -1.0)) - 1.1) < 0.001
+	if absf(float(coast.get("distance", -1.0)) - 1.1) > 0.001:
+		return false
+	return smoke_check_six()
+
+
+static func smoke_check_six() -> bool:
+	# Six remote birds, 20 Hz snapshots, shared recv time, one dropped packet.
+	var birds: Array[NetSmooth] = []
+	for i in 6:
+		var buf := NetSmooth.new()
+		for k in 8:
+			if i == 3 and k == 4:
+				continue
+			var t := 1.00 + float(k) * 0.05
+			buf.push_at(t, {
+				"distance": 10.0 + float(i) * 0.80 + float(k) * 0.10,
+				"groove": 0.18 + float(i) * 0.04,
+				"height": 0.0,
+				"vel": 2.0,
+				"along": 2.0,
+			})
+		birds.append(buf)
+	var sample_at := 1.30
+	var prev_d := -INF
+	for i in 6:
+		var row: Dictionary = birds[i].sample(sample_at)
+		var d := float(row.get("distance", -1.0))
+		if d < 0.0:
+			return false
+		if i == 3:
+			if absf(d - (10.0 + 2.40 + 0.40)) > 0.08:
+				return false
+		elif absf(d - (10.0 + float(i) * 0.80 + 0.40)) > 0.02:
+			return false
+		if d + 0.50 < prev_d:
+			return false
+		prev_d = d
+	var coast_a: Dictionary = birds[0].sample(1.42)
+	var coast_b: Dictionary = birds[5].sample(1.42)
+	return absf(float(coast_a.get("distance", 0.0)) - float(coast_b.get("distance", 0.0))) >= 3.5

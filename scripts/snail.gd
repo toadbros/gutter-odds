@@ -293,20 +293,24 @@ func leave_track_follow() -> void:
 	net_smooth.clear()
 
 
-func push_net_track() -> void:
+func push_net_track(recv_t: float = -1.0) -> void:
 	var last := net_smooth.latest()
 	if not last.is_empty() and absf(distance - float(last.get("distance", distance))) > 2.4:
 		net_smooth.clear()
 	var along := 0.0
 	if racing and not finished:
 		along = vel * line_speed() + bump_along
-	net_smooth.push({
+	var sample := {
 		"distance": distance,
 		"groove": groove,
 		"height": height,
 		"vel": vel,
 		"along": along,
-	})
+	}
+	if recv_t < 0.0:
+		net_smooth.push(sample)
+	else:
+		net_smooth.push_at(recv_t, sample)
 
 
 func sample_net_track() -> Dictionary:
