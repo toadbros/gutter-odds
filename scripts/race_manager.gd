@@ -48,6 +48,13 @@ var last_pack_beat: Dictionary = {}
 const SNAIL_SCENE := preload("res://scenes/snail.tscn")
 const RACE_HARD_CAP := 75.0
 const PHOTO_WAIT := 8.0
+# Dummy-physics radii in track meters. Body is ~0.28–0.32; soft starts earlier.
+const BIRD_BODY_R := 0.30
+const BIRD_SOFT_R := 0.42
+const SEP_ITERS := 3
+const SEP_MAX_STEP := 0.05
+const SEP_BOUNCE := 0.38
+const SEP_FLAP_Y := 0.11
 
 
 func _ready() -> void:
@@ -253,6 +260,7 @@ func apply_snapshot(data: Variant) -> void:
 		snail.groove = float(row.get("groove", snail.groove))
 		snail.height = float(row.get("height", snail.height))
 		snail.vel = float(row.get("vel", snail.vel))
+		snail.bump_along = float(row.get("bump_along", snail.bump_along))
 		snail.squish = float(row.get("squish", snail.squish))
 		snail.freeze_left = float(row.get("freeze_left", snail.freeze_left))
 		snail.chaos_tag = str(row.get("chaos_tag", snail.chaos_tag))
@@ -339,9 +347,14 @@ func _process(delta: float) -> void:
 		snail.tick_crawl(delta)
 	_jostle(delta)
 	_stamp_chaos_tags()
+	var span := groove_span()
 	for snail in field:
 		if snail.racing and not snail.finished:
-			snail.distance += snail.vel * snail.line_speed() * delta
+			snail.distance += (snail.vel * snail.line_speed() + snail.bump_along) * delta
+			snail.groove = clampf(snail.groove + snail.bump_lat / maxf(span, 0.001) * delta, 0.04, 0.96)
+			snail.decay_bump(delta)
+	_separate_field(delta)
+	for snail in field:
 		if not snail.finished and snail.distance >= track_length:
 			snail.finished = true
 			snail.racing = false
@@ -600,6 +613,7 @@ func _push_snapshot() -> void:
 			"groove": snail.groove,
 			"height": snail.height,
 			"vel": snail.vel,
+			"bump_along": snail.bump_along,
 			"squish": snail.squish,
 			"freeze_left": snail.freeze_left,
 			"chaos_tag": snail.chaos_tag,
@@ -723,13 +737,22 @@ func _place_in_pen(snail: Snail, index: int) -> void:
 func _render_client_field() -> void:
 	if Game.phase != Game.Phase.RACE:
 		return
+	var vis_rows: Array[Dictionary] = []
 	for snail in field:
 		var vis := snail.sample_net_track()
+		vis_rows.append(vis)
 		if vis.is_empty():
 			continue
+		vis["id"] = snail.snail_id
 		snail.hint_visual_speed(float(vis.get("vel", snail.vel)))
+	# Soft visual unstick only — does not write host-owned distance/groove.
+	_separate_vis_rows(vis_rows)
+	for i in field.size():
+		var vis: Dictionary = vis_rows[i]
+		if vis.is_empty():
+			continue
 		# Snap to the interpolated curve sample; extra host-style lerp would add delay.
-		_place_on_track(snail, true, vis)
+		_place_on_track(field[i], true, vis)
 
 
 func _place_on_track(snail: Snail, snap: bool = false, vis: Dictionary = {}) -> void:
@@ -746,7 +769,7 @@ func _place_on_track(snail: Snail, snap: bool = false, vis: Dictionary = {}) -> 
 		inward = -xf.basis.x
 	else:
 		inward = inward.normalized()
-	var usable := Game.TRACK_WIDTH * 0.78
+	var usable := groove_span()
 	var origin := xf.origin + inward * (0.5 - groove) * usable
 	origin.y = xf.origin.y + height + Game.TRACK_STAND_LIFT
 	var ahead := path.curve.sample_baked(clampf(d + 0.22, 0.0, length))
@@ -816,30 +839,7 @@ func _jostle(delta: float) -> void:
 						snail.told_slip = true
 						Game.announce("%s gets pinned and dumped." % snail.display_name)
 
-	# Soft overlap so feathers don't occupy the same dirt.
-	for i in field.size():
-		var a: Snail = field[i]
-		if a.finished:
-			continue
-		for j in range(i + 1, field.size()):
-			var b: Snail = field[j]
-			if b.finished:
-				continue
-			if absf(a.distance - b.distance) > ALONG:
-				continue
-			if absf(a.height - b.height) > 0.09:
-				continue
-			var gdiff := a.groove - b.groove
-			if absf(gdiff) > GROOVE:
-				continue
-			var push := 0.45 * delta
-			if absf(gdiff) < 0.001:
-				a.groove += push
-				b.groove -= push
-			else:
-				var s := signf(gdiff)
-				a.groove += s * push
-				b.groove -= s * push
+	# Pairwise bounce lives in _separate_field after distance integrate.
 
 	for snail in field:
 		var support := 0.0
@@ -860,6 +860,180 @@ func _jostle(delta: float) -> void:
 				snail.height_vel = 0.0
 		snail.groove = clampf(snail.groove, 0.04, 0.96)
 		snail.height = clampf(snail.height, 0.0, 0.28)
+
+
+func groove_span() -> float:
+	return Game.TRACK_WIDTH * 0.78
+
+
+func pair_plan_gap(a: Snail, b: Snail) -> float:
+	var along := a.distance - b.distance
+	var lat := (a.groove - b.groove) * groove_span()
+	return Vector2(along, lat).length()
+
+
+func pair_world_gap(a: Snail, b: Snail) -> float:
+	var pa := a.global_position
+	var pb := b.global_position
+	pa.y = 0.0
+	pb.y = 0.0
+	return pa.distance_to(pb)
+
+
+func min_pack_gap() -> float:
+	var best := INF
+	for i in field.size():
+		for j in range(i + 1, field.size()):
+			best = minf(best, pair_world_gap(field[i], field[j]))
+	return 0.0 if best == INF else best
+
+
+func pack_for_sep_smoke() -> void:
+	# Keep manager.racing false so _process does not also drive the card.
+	for i in field.size():
+		var snail: Snail = field[i]
+		snail.racing = true
+		snail.finished = false
+		snail.distance = 18.0 + float(i) * 0.012
+		snail.groove = 0.16
+		snail.height = 0.0
+		snail.height_vel = 0.0
+		snail.vel = 1.35
+		snail.bump_along = 0.0
+		snail.bump_lat = 0.0
+		snail.freeze_left = 0.0
+		snail.chaos_beat = Snail.ChaosBeat.NONE
+		snail.chaos_tag = ""
+		_place_on_track(snail, true)
+
+
+func step_sep_smoke(delta: float) -> Dictionary:
+	var before: Array[Vector3] = []
+	for snail in field:
+		before.append(snail.global_position)
+	var span := groove_span()
+	for snail in field:
+		if snail.racing and not snail.finished:
+			snail.distance += (snail.vel * snail.line_speed() + snail.bump_along) * delta
+			snail.groove = clampf(snail.groove + snail.bump_lat / maxf(span, 0.001) * delta, 0.04, 0.96)
+			snail.decay_bump(delta)
+	_separate_field(delta)
+	var max_jump := 0.0
+	for i in field.size():
+		_place_on_track(field[i], true)
+		var d: float = field[i].global_position.distance_to(before[i])
+		max_jump = maxf(max_jump, d)
+	return {
+		"min_gap": min_pack_gap(),
+		"min_plan": _min_plan_gap(),
+		"max_jump": max_jump,
+	}
+
+
+func _min_plan_gap() -> float:
+	var best := INF
+	for i in field.size():
+		for j in range(i + 1, field.size()):
+			best = minf(best, pair_plan_gap(field[i], field[j]))
+	return 0.0 if best == INF else best
+
+
+func _separate_field(delta: float) -> void:
+	var span := groove_span()
+	for _iter in SEP_ITERS:
+		for i in field.size():
+			var a: Snail = field[i]
+			if a.finished:
+				continue
+			for j in range(i + 1, field.size()):
+				var b: Snail = field[j]
+				if b.finished:
+					continue
+				_separate_pair(a, b, span, delta, true)
+	for snail in field:
+		snail.groove = clampf(snail.groove, 0.04, 0.96)
+		snail.distance = clampf(snail.distance, 0.0, maxf(track_length, 0.001))
+
+
+func _separate_vis_rows(rows: Array[Dictionary]) -> void:
+	var span := groove_span()
+	for _iter in 2:
+		for i in rows.size():
+			var a: Dictionary = rows[i]
+			if a.is_empty():
+				continue
+			for j in range(i + 1, rows.size()):
+				var b: Dictionary = rows[j]
+				if b.is_empty():
+					continue
+				_separate_vis_pair(a, b, span)
+
+
+func _separate_pair(a: Snail, b: Snail, span: float, delta: float, bounce: bool) -> void:
+	var flap := absf(a.height - b.height)
+	var stiff := 1.0
+	if flap > SEP_FLAP_Y:
+		# Flap-over can share a column; still glance so meshes don't sit inside each other.
+		stiff = 0.32
+	var along := a.distance - b.distance
+	var lat := (a.groove - b.groove) * span
+	var offset := _sep_axis(along, lat, a.snail_id, b.snail_id)
+	along = offset.x
+	lat = offset.y
+	var dist := offset.length()
+	if dist >= BIRD_SOFT_R:
+		return
+	var n_along := along / dist
+	var n_lat := lat / dist
+	var overlap := BIRD_SOFT_R - dist
+	if dist < BIRD_BODY_R:
+		overlap += (BIRD_BODY_R - dist) * 0.85
+	var u := clampf(1.0 - exp(-delta * 16.0), 0.18, 0.65)
+	var corr := minf(overlap * 0.5 * stiff * u, SEP_MAX_STEP)
+	a.distance += n_along * corr
+	b.distance -= n_along * corr
+	if span > 0.0001:
+		a.groove += n_lat * corr / span
+		b.groove -= n_lat * corr / span
+	if not bounce:
+		return
+	var a_along := a.vel * a.line_speed() + a.bump_along
+	var b_along := b.vel * b.line_speed() + b.bump_along
+	var rel := (a_along - b_along) * n_along + (a.bump_lat - b.bump_lat) * n_lat
+	if rel >= -0.04:
+		return
+	var j := -rel * SEP_BOUNCE * stiff
+	a.bump_along += n_along * j
+	b.bump_along -= n_along * j
+	a.bump_lat += n_lat * j
+	b.bump_lat -= n_lat * j
+
+
+func _separate_vis_pair(a: Dictionary, b: Dictionary, span: float) -> void:
+	if absf(float(a.get("height", 0.0)) - float(b.get("height", 0.0))) > SEP_FLAP_Y:
+		return
+	var along := float(a.get("distance", 0.0)) - float(b.get("distance", 0.0))
+	var lat := (float(a.get("groove", 0.0)) - float(b.get("groove", 0.0))) * span
+	var offset := _sep_axis(along, lat, int(a.get("id", 0)), int(b.get("id", 1)))
+	var dist := offset.length()
+	if dist >= BIRD_BODY_R:
+		return
+	var corr := minf((BIRD_BODY_R - dist) * 0.5, 0.035)
+	var n_along := offset.x / dist
+	var n_lat := offset.y / dist
+	a["distance"] = float(a.get("distance", 0.0)) + n_along * corr
+	b["distance"] = float(b.get("distance", 0.0)) - n_along * corr
+	if span > 0.0001:
+		a["groove"] = float(a.get("groove", 0.0)) + n_lat * corr / span
+		b["groove"] = float(b.get("groove", 0.0)) - n_lat * corr / span
+
+
+func _sep_axis(along: float, lat: float, id_a: int, id_b: int) -> Vector2:
+	if Vector2(along, lat).length() >= 0.0008:
+		return Vector2(along, lat)
+	var s := -1.0 if id_a < id_b else 1.0
+	var side := 1.0 if (id_a % 2) == 0 else -1.0
+	return Vector2(0.10 * s, 0.035 * side)
 
 
 func _inside_blocker(snail: Snail, along: float, groove: float) -> Snail:
