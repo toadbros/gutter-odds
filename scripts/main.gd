@@ -3,6 +3,9 @@ extends Node
 
 func _ready() -> void:
 	$World.add_to_group("world")
+	if OS.get_cmdline_user_args().has("--sep-demo"):
+		_run_sep_demo()
+		return
 	if DisplayServer.get_name() != "headless":
 		return
 	if OS.get_cmdline_user_args().has("--chaos-smoke"):
@@ -482,6 +485,24 @@ func _probe_feel_race() -> void:
 	var feel_gap := manager.min_pack_gap()
 	print("SMOKE: feel_min_gap=", snappedf(feel_gap, 0.01))
 	get_tree().quit()
+
+
+func _run_sep_demo() -> void:
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		if phase == Game.Phase.OPEN:
+			await get_tree().process_frame
+			Game.ring_the_bell()
+		elif phase == Game.Phase.RACE:
+			var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+			if manager == null:
+				return
+			manager.pack_for_sep_smoke()
+			manager.racing = true
+			print("SMOKE: sep-demo packed min_gap=", snappedf(manager.min_pack_gap(), 0.001))
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
 
 
 func _run_sep_smoke() -> void:
