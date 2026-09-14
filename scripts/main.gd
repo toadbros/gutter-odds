@@ -366,10 +366,13 @@ func _print_visible_bets_smoke() -> void:
 	var rows: Array = NetPlay.visible_bets()
 	print("SMOKE: visible_bets=", rows.size())
 	for row in rows:
+		if not row is Dictionary:
+			continue
 		print("SMOKE: slip=", row.get("name", "?"), " idx=", row.get("index", -1), " amt=", row.get("amount", 0))
 	if rows.is_empty():
 		push_error("SMOKE: visible bets payload empty")
-	var local := rows[0]
+		return
+	var local: Dictionary = rows[0]
 	if int(local.get("amount", 0)) <= 0 or int(local.get("index", -1)) < 0:
 		push_error("SMOKE: local slip missing from visible bets")
 
