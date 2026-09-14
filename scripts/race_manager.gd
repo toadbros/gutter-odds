@@ -957,7 +957,7 @@ func _separate_field(delta: float) -> void:
 
 func _separate_vis_rows(rows: Array[Dictionary]) -> void:
 	var span := groove_span()
-	for _iter in 2:
+	for _iter in 4:
 		for i in rows.size():
 			var a: Dictionary = rows[i]
 			if a.is_empty():
@@ -1018,7 +1018,7 @@ func _separate_vis_pair(a: Dictionary, b: Dictionary, span: float) -> void:
 	var dist := offset.length()
 	if dist >= BIRD_BODY_R:
 		return
-	var corr := minf((BIRD_BODY_R - dist) * 0.5, 0.035)
+	var corr := minf((BIRD_BODY_R - dist) * 0.5 * 0.7, 0.06)
 	var n_along := offset.x / dist
 	var n_lat := offset.y / dist
 	a["distance"] = float(a.get("distance", 0.0)) + n_along * corr

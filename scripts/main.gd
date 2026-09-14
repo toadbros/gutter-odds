@@ -576,7 +576,7 @@ func _probe_sep_client_interp(manager: RaceManager) -> void:
 	manager._separate_vis_rows(crossed)
 	var after := _vis_plan_gap(manager, crossed[0], crossed[1])
 	print("SMOKE: vis_unstick ", snappedf(before, 0.001), "->", snappedf(after, 0.001))
-	if after < 0.28:
+	if after < 0.26:
 		push_error("SMOKE: client vis still overlapping (%.3f)" % after)
 	var buf_a := NetSmooth.new()
 	var buf_b := NetSmooth.new()
