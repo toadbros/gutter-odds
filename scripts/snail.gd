@@ -31,6 +31,8 @@ var finished: bool = false
 var finish_time: float = 0.0
 var place: int = 0
 var vel: float = 0.0
+var bump_along: float = 0.0
+var bump_lat: float = 0.0
 var climb_timer: float = 0.0
 var chaos_beat: ChaosBeat = ChaosBeat.NONE
 var hunger: float = 80.0
@@ -146,6 +148,8 @@ func configure(data: Dictionary, number: int, lane_offset: float) -> void:
 	finish_time = 0.0
 	place = 0
 	vel = 0.0
+	bump_along = 0.0
+	bump_lat = 0.0
 	freeze_left = 0.0
 	freeze_lock = 0.0
 	zone_hit = false
@@ -252,6 +256,8 @@ func kick_off() -> void:
 	zone_hit = false
 	chaos_tag = ""
 	crop_boost = 0.0
+	bump_along = 0.0
+	bump_lat = 0.0
 	told_rail = false
 	told_climb = false
 	told_cut = false
@@ -293,7 +299,7 @@ func push_net_track() -> void:
 		net_smooth.clear()
 	var along := 0.0
 	if racing and not finished:
-		along = vel * line_speed()
+		along = vel * line_speed() + bump_along
 	net_smooth.push({
 		"distance": distance,
 		"groove": groove,
@@ -305,6 +311,18 @@ func push_net_track() -> void:
 
 func sample_net_track() -> Dictionary:
 	return net_smooth.sample()
+
+
+func decay_bump(delta: float) -> void:
+	var keep := exp(-delta * 6.5)
+	bump_along *= keep
+	bump_lat *= keep
+	if absf(bump_along) < 0.01:
+		bump_along = 0.0
+	if absf(bump_lat) < 0.01:
+		bump_lat = 0.0
+	bump_along = clampf(bump_along, -1.55, 1.55)
+	bump_lat = clampf(bump_lat, -1.8, 1.8)
 
 
 func hint_visual_speed(v: float) -> void:

@@ -3,6 +3,9 @@ extends Node
 
 func _ready() -> void:
 	$World.add_to_group("world")
+	if OS.get_cmdline_user_args().has("--sep-demo"):
+		_run_sep_demo()
+		return
 	if DisplayServer.get_name() != "headless":
 		return
 	if OS.get_cmdline_user_args().has("--chaos-smoke"):
@@ -20,6 +23,9 @@ func _ready() -> void:
 		return
 	if OS.get_cmdline_user_args().has("--tell-smoke"):
 		_run_tell_smoke()
+		return
+	if OS.get_cmdline_user_args().has("--sep-smoke"):
+		_run_sep_smoke()
 		return
 	_run_headless_smoke()
 
@@ -476,7 +482,141 @@ func _probe_feel_race() -> void:
 			if yell != "THEY'RE IN":
 				push_error("SMOKE: finish yell missing")
 	print("SMOKE: feel mid-race flips=", flips, " beats=", beats)
+	var feel_gap := manager.min_pack_gap()
+	print("SMOKE: feel_min_gap=", snappedf(feel_gap, 0.01))
 	get_tree().quit()
+
+
+func _run_sep_demo() -> void:
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		if phase == Game.Phase.OPEN:
+			await get_tree().process_frame
+			Game.ring_the_bell()
+		elif phase == Game.Phase.RACE:
+			var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+			if manager == null:
+				return
+			manager.pack_for_sep_smoke()
+			manager.racing = true
+			print("SMOKE: sep-demo packed min_gap=", snappedf(manager.min_pack_gap(), 0.001))
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _run_sep_smoke() -> void:
+	print("SMOKE: net_smooth=", "ok" if NetSmooth.smoke_check() else "FAIL")
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: sep phase=", phase)
+		if phase != Game.Phase.OPEN:
+			return
+		await get_tree().process_frame
+		await get_tree().process_frame
+		var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+		if manager == null or manager.field.size() < 2:
+			push_error("SMOKE: no packed field for sep")
+			get_tree().quit()
+			return
+		_probe_sep_pack(manager)
+		_probe_sep_chase(manager)
+		_probe_sep_client_interp(manager)
+		print("SMOKE: sep done")
+		get_tree().quit()
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _probe_sep_pack(manager: RaceManager) -> void:
+	manager.pack_for_sep_smoke()
+	var start_gap := manager.min_pack_gap()
+	print("SMOKE: packed_gap=", snappedf(start_gap, 0.001), " birds=", manager.field.size())
+	if start_gap > 0.12:
+		push_error("SMOKE: pack did not stack the field")
+	var worst := INF
+	var max_jump := 0.0
+	for i in 90:
+		var step: Dictionary = manager.step_sep_smoke(1.0 / 60.0)
+		if i >= 3:
+			max_jump = maxf(max_jump, float(step.get("max_jump", 0.0)))
+		if i >= 20:
+			worst = minf(worst, float(step.get("min_gap", 0.0)))
+	var end_gap := manager.min_pack_gap()
+	print(
+		"SMOKE: pack_end_gap=", snappedf(end_gap, 0.001),
+		" pack_worst=", snappedf(worst, 0.001),
+		" pack_max_jump=", snappedf(max_jump, 0.001)
+	)
+	if worst < 0.26:
+		push_error("SMOKE: packed field stayed overlapping (worst %.3f)" % worst)
+	if end_gap < 0.28:
+		push_error("SMOKE: packed field did not separate (end %.3f)" % end_gap)
+	if max_jump > 0.14:
+		push_error("SMOKE: sep teleported a bird (jump %.3f)" % max_jump)
+
+
+func _probe_sep_chase(manager: RaceManager) -> void:
+	for i in manager.field.size():
+		var snail: Snail = manager.field[i]
+		snail.racing = true
+		snail.finished = false
+		snail.distance = 18.0 + float(i) * 0.10
+		snail.groove = 0.12
+		snail.height = 0.0
+		snail.vel = 2.0
+		snail.bump_along = 0.0
+		snail.bump_lat = 0.0
+		manager._place_on_track(snail, true)
+	var worst := INF
+	var max_jump := 0.0
+	for i in 60:
+		var step: Dictionary = manager.step_sep_smoke(1.0 / 60.0)
+		if i >= 3:
+			max_jump = maxf(max_jump, float(step.get("max_jump", 0.0)))
+		if i >= 15:
+			worst = minf(worst, float(step.get("min_gap", 0.0)))
+	print(
+		"SMOKE: chase_gap=", snappedf(manager.min_pack_gap(), 0.001),
+		" chase_worst=", snappedf(worst, 0.001),
+		" chase_max_jump=", snappedf(max_jump, 0.001)
+	)
+	if worst < 0.26:
+		push_error("SMOKE: same-lane chase overlapped (worst %.3f)" % worst)
+	if max_jump > 0.14:
+		push_error("SMOKE: chase teleported a bird (jump %.3f)" % max_jump)
+
+
+func _probe_sep_client_interp(manager: RaceManager) -> void:
+	var crossed: Array[Dictionary] = [
+		{"distance": 18.00, "groove": 0.20, "height": 0.0, "id": 0},
+		{"distance": 18.02, "groove": 0.20, "height": 0.0, "id": 1},
+	]
+	var before := _vis_plan_gap(manager, crossed[0], crossed[1])
+	manager._separate_vis_rows(crossed)
+	var after := _vis_plan_gap(manager, crossed[0], crossed[1])
+	print("SMOKE: vis_unstick ", snappedf(before, 0.001), "->", snappedf(after, 0.001))
+	if after < 0.26:
+		push_error("SMOKE: client vis still overlapping (%.3f)" % after)
+	var buf_a := NetSmooth.new()
+	var buf_b := NetSmooth.new()
+	buf_a.push_at(1.00, {"distance": 18.00, "groove": 0.10, "height": 0.0, "vel": 2.0, "along": 2.0})
+	buf_a.push_at(1.05, {"distance": 18.10, "groove": 0.10, "height": 0.0, "vel": 2.0, "along": 2.0})
+	buf_b.push_at(1.00, {"distance": 18.48, "groove": 0.10, "height": 0.0, "vel": 2.0, "along": 2.0})
+	buf_b.push_at(1.05, {"distance": 18.58, "groove": 0.10, "height": 0.0, "vel": 2.0, "along": 2.0})
+	var sa := buf_a.sample(1.125)
+	var sb := buf_b.sample(1.125)
+	var interp := _vis_plan_gap(manager, sa, sb)
+	print("SMOKE: interp_gap=", snappedf(interp, 0.001))
+	if interp < 0.30:
+		push_error("SMOKE: interpolated pair collapsed (%.3f)" % interp)
+
+
+func _vis_plan_gap(manager: RaceManager, a: Dictionary, b: Dictionary) -> float:
+	var along := float(a.get("distance", 0.0)) - float(b.get("distance", 0.0))
+	var lat := (float(a.get("groove", 0.0)) - float(b.get("groove", 0.0))) * manager.groove_span()
+	return Vector2(along, lat).length()
 
 
 func _run_chaos_smoke() -> void:
