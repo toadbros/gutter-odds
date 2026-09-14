@@ -2,7 +2,10 @@ class_name RaceChaos
 extends RefCounted
 
 enum Condition { FAIR_DIRT, DUST_BOWL, GREASE_DRIP, KERNEL_SCATTER, STORM_COMING }
-enum LiveEvent { NONE, OIL_SLICK, CORN_RAIN, HAWK, FALSE_GUN, LOOSE_DOG, CROWD_SQUEEZE }
+enum LiveEvent {
+	NONE, OIL_SLICK, CORN_RAIN, HAWK, FALSE_GUN, LOOSE_DOG, CROWD_SQUEEZE,
+	RACCOON_SNIPER, HAWK_DIVE, LAWN_CHAIR, BOTTLE_ROCKET,
+}
 
 const GREASE_FRAC := 0.52
 const GREASE_WIDTH := 0.08
@@ -34,7 +37,24 @@ const EVENT_NAMES: PackedStringArray = [
 	"False Gun",
 	"Loose Dog",
 	"Crowd Squeeze",
+	"Raccoon Sniper",
+	"Hawk Dive",
+	"Lawn Chair",
+	"Bottle Rocket",
 ]
+
+const COMMON_EVENTS: Array[int] = [
+	LiveEvent.OIL_SLICK, LiveEvent.CORN_RAIN, LiveEvent.HAWK,
+	LiveEvent.FALSE_GUN, LiveEvent.LOOSE_DOG, LiveEvent.CROWD_SQUEEZE,
+]
+
+const RARE_EVENTS: Array[int] = [
+	LiveEvent.RACCOON_SNIPER, LiveEvent.HAWK_DIVE,
+	LiveEvent.LAWN_CHAIR, LiveEvent.BOTTLE_ROCKET,
+]
+
+# Sparse spice. Commons stay the default diet. At most one rare per night.
+const RARE_CHANCE := 1.0 / 12.0
 
 # Locked W2-T1 card tells. One line, laugh-first. Do not invent a second wiki.
 const TELL_CHAOS_CORN := "Chaos birds love corn. Problem."
@@ -86,7 +106,11 @@ static func is_dog_card(condition: int, event: int = LiveEvent.NONE) -> bool:
 
 
 static func is_hawk_card(condition: int, event: int = LiveEvent.NONE) -> bool:
-	return condition == Condition.STORM_COMING or event == LiveEvent.HAWK
+	return condition == Condition.STORM_COMING or event == LiveEvent.HAWK or event == LiveEvent.HAWK_DIVE
+
+
+static func is_rare(event: int) -> bool:
+	return RARE_EVENTS.has(event)
 
 
 # One tell. Chemistry (tonight's card) beats quirk/archetype defaults.
@@ -147,7 +171,7 @@ static func has_live_chemistry(arch: int, traits: Variant, event: int) -> bool:
 			return live == TELL_SPRINTER_OIL or live == TELL_GREASE_LUCKY
 		LiveEvent.LOOSE_DOG:
 			return live == TELL_STEADY_DOG
-		LiveEvent.HAWK:
+		LiveEvent.HAWK, LiveEvent.HAWK_DIVE:
 			return live == TELL_HAWK_BLIND or live == TELL_LATE_HAWK
 		LiveEvent.FALSE_GUN:
 			return live == TELL_SPRINTER_GUN
@@ -163,7 +187,7 @@ static func social_called_line(trainer: String, event: int) -> String:
 			return "%s called the skillet." % who
 		LiveEvent.LOOSE_DOG:
 			return "%s called the dog." % who
-		LiveEvent.HAWK:
+		LiveEvent.HAWK, LiveEvent.HAWK_DIVE:
 			return "%s called the hawk." % who
 		LiveEvent.FALSE_GUN:
 			return "%s called the fake bang." % who
@@ -179,7 +203,7 @@ static func social_shame_line(trainer: String, event: int) -> String:
 			return "%s's slip just drowned in oil. Shame." % who
 		LiveEvent.LOOSE_DOG:
 			return "%s picked the rail. Shame." % who
-		LiveEvent.HAWK:
+		LiveEvent.HAWK, LiveEvent.HAWK_DIVE:
 			return "%s bet the flop. Shame." % who
 		LiveEvent.FALSE_GUN:
 			return "%s picked the wrong bang. Shame." % who
@@ -271,6 +295,14 @@ static func event_callout(event: int) -> String:
 			return "A dog's on the rail. Steady birds dump inside."
 		LiveEvent.CROWD_SQUEEZE:
 			return "The crowd leans in. They're pinning the pack."
+		LiveEvent.RACCOON_SNIPER:
+			return "Raccoon in the stands. Somebody's getting popped."
+		LiveEvent.HAWK_DIVE:
+			return "That hawk picked a favorite. Hold your slip."
+		LiveEvent.LAWN_CHAIR:
+			return "Lawn chairs. The cheap seats just joined the race."
+		LiveEvent.BOTTLE_ROCKET:
+			return "Somebody lit a bottle rocket. Infield's a war crime."
 	return ""
 
 
@@ -310,6 +342,14 @@ static func roast_punchline(event: int, bird: String, owner: String, arch: int) 
 			return "False gun, real grease. %s is toast." % bird_who
 		LiveEvent.CROWD_SQUEEZE:
 			return "The crowd pinned %s. The oil finished it." % bird_who
+		LiveEvent.RACCOON_SNIPER:
+			return "A raccoon sniped %s. Fryer said thanks." % bird_who
+		LiveEvent.HAWK_DIVE:
+			return "Hawk dove for %s. Dinner volunteered." % bird_who
+		LiveEvent.LAWN_CHAIR:
+			return "%s lost to a lawn chair. The oil was mercy." % bird_who
+		LiveEvent.BOTTLE_ROCKET:
+			return "Bottle rocket found %s. Extra crispy." % bird_who
 	return ""
 
 
@@ -327,6 +367,8 @@ static func table_roast(winner: String, fryer_line: String, punch: String) -> St
 static func event_rank(event: int) -> int:
 	match event:
 		LiveEvent.HAWK, LiveEvent.CORN_RAIN:
+			return 1
+		LiveEvent.RACCOON_SNIPER, LiveEvent.HAWK_DIVE, LiveEvent.LAWN_CHAIR, LiveEvent.BOTTLE_ROCKET:
 			return 1
 		LiveEvent.OIL_SLICK, LiveEvent.LOOSE_DOG:
 			return 2
@@ -358,6 +400,14 @@ static func event_flash(event: int) -> Color:
 			return Color("8a5a28")
 		LiveEvent.CROWD_SQUEEZE:
 			return Color("8a3a4a")
+		LiveEvent.RACCOON_SNIPER:
+			return Color("4a3a28")
+		LiveEvent.HAWK_DIVE:
+			return Color("8a1020")
+		LiveEvent.LAWN_CHAIR:
+			return Color("b07a48")
+		LiveEvent.BOTTLE_ROCKET:
+			return Color("f8e070")
 	return Color("b08d57")
 
 
@@ -401,10 +451,7 @@ static func pick_live_event(condition: int, wing: int, used: Array) -> int:
 		if not used.has(event):
 			filtered.append(event)
 	if filtered.is_empty():
-		filtered = [
-			LiveEvent.OIL_SLICK, LiveEvent.CORN_RAIN, LiveEvent.HAWK,
-			LiveEvent.FALSE_GUN, LiveEvent.LOOSE_DOG, LiveEvent.CROWD_SQUEEZE,
-		]
+		filtered = COMMON_EVENTS.duplicate()
 		var leftover: Array[int] = []
 		for event in filtered:
 			if not used.has(event):
@@ -429,6 +476,14 @@ static func event_duration(event: int) -> float:
 			return randf_range(1.7, 2.6)
 		LiveEvent.CROWD_SQUEEZE:
 			return randf_range(1.5, 2.3)
+		LiveEvent.RACCOON_SNIPER:
+			return randf_range(2.0, 2.8)
+		LiveEvent.HAWK_DIVE:
+			return randf_range(1.8, 2.6)
+		LiveEvent.LAWN_CHAIR:
+			return randf_range(1.7, 2.5)
+		LiveEvent.BOTTLE_ROCKET:
+			return randf_range(1.5, 2.2)
 	return 1.8
 
 
@@ -487,6 +542,17 @@ static func line_mult(condition: int, live: int, groove: float, height: float, a
 				m *= 0.78
 		LiveEvent.CROWD_SQUEEZE:
 			m *= 0.98 if hog else 0.92
+		LiveEvent.HAWK_DIVE:
+			if height > 0.02 and not calm:
+				m *= 0.52
+			else:
+				m *= 0.86
+		LiveEvent.RACCOON_SNIPER:
+			m *= 0.88
+		LiveEvent.LAWN_CHAIR:
+			m *= 0.84
+		LiveEvent.BOTTLE_ROCKET:
+			m *= 0.82
 	return m
 
 
@@ -568,7 +634,12 @@ static func _pool_for(condition: int) -> Array[int]:
 			return [LiveEvent.CORN_RAIN, LiveEvent.CROWD_SQUEEZE, LiveEvent.FALSE_GUN]
 		Condition.STORM_COMING:
 			return [LiveEvent.HAWK, LiveEvent.FALSE_GUN, LiveEvent.LOOSE_DOG]
-	return [
-		LiveEvent.OIL_SLICK, LiveEvent.CORN_RAIN, LiveEvent.HAWK,
-		LiveEvent.FALSE_GUN, LiveEvent.LOOSE_DOG, LiveEvent.CROWD_SQUEEZE,
-	]
+	return COMMON_EVENTS.duplicate()
+
+
+static func roll_rare(night_used: bool, jewel: bool = false) -> int:
+	if night_used or jewel:
+		return LiveEvent.NONE
+	if randf() >= RARE_CHANCE:
+		return LiveEvent.NONE
+	return RARE_EVENTS[randi() % RARE_EVENTS.size()]

@@ -58,6 +58,7 @@ var _first_card: bool = true
 var last_social_toast: String = ""
 var social_toast_count: int = 0
 var _social_locked: bool = false
+var night_rare_used: bool = false
 
 
 func _ready() -> void:
@@ -108,6 +109,7 @@ func begin_night() -> void:
 	_first_card = true
 	last_social_toast = ""
 	social_toast_count = 0
+	night_rare_used = false
 	unlock_social_toast()
 	vip_changed.emit(false)
 	money_changed.emit(bottlecaps)
@@ -653,6 +655,10 @@ func social_toast_for_event(event: int, victim_index: int = -1) -> String:
 	return RaceChaos.social_spice_toast(NetPlay.visible_bets(), birds, event, victim_index)
 
 
+func mark_night_rare() -> void:
+	night_rare_used = true
+
+
 func note_social_toast(text: String) -> void:
 	if text.is_empty() or _social_locked:
 		return
@@ -1055,6 +1061,10 @@ func _bind_inputs() -> void:
 	_bind_key("chaos_dog", KEY_4)
 	_bind_key("chaos_gun", KEY_5)
 	_bind_key("chaos_crowd", KEY_6)
+	_bind_key("chaos_raccoon", KEY_7)
+	_bind_key("chaos_dive", KEY_8)
+	_bind_key("chaos_chair", KEY_9)
+	_bind_key("chaos_rocket", KEY_0)
 	var mouse := InputEventMouseButton.new()
 	mouse.button_index = MOUSE_BUTTON_RIGHT
 	if not InputMap.has_action("binoculars"):

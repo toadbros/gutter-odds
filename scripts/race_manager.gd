@@ -38,6 +38,7 @@ var events_left: int = 0
 var events_used: Array[int] = []
 var last_event_id: int = 0
 var next_event_frac: float = 0.28
+var rare_pending: int = RaceChaos.LiveEvent.NONE
 var _event_struck: bool = false
 var _dealt: Array[int] = []
 var _snap_t: float = 0.0
@@ -68,6 +69,7 @@ func reset_night() -> void:
 	events_left = 0
 	events_used.clear()
 	last_event_id = 0
+	rare_pending = RaceChaos.LiveEvent.NONE
 	get_tree().call_group("stadium", "apply_card_condition", card_condition)
 	for snail in field:
 		snail.racing = false
@@ -1070,6 +1072,7 @@ func _roll_card_chaos() -> void:
 	last_event_id = 0
 	events_left = RaceChaos.planned_event_count(card_condition, wing >= 0)
 	next_event_frac = RaceChaos.first_event_frac()
+	rare_pending = RaceChaos.roll_rare(Game.night_rare_used, wing >= 0)
 	_event_struck = false
 	get_tree().call_group("stadium", "apply_card_condition", card_condition)
 	get_tree().call_group("stadium", "clear_live_event")
@@ -1089,10 +1092,19 @@ func _tick_live_events(delta: float) -> void:
 		if event_t >= event_dur:
 			_clear_live_event(true)
 		return
+	var frac := _leader_frac()
+	if frac >= RaceChaos.LAST_FRAC:
+		return
+	if rare_pending != RaceChaos.LiveEvent.NONE and frac >= next_event_frac:
+		var rare := rare_pending
+		rare_pending = RaceChaos.LiveEvent.NONE
+		Game.mark_night_rare()
+		_fire_live_event(rare, false)
+		next_event_frac = RaceChaos.next_event_frac(_leader_frac())
+		return
 	if events_left <= 0:
 		return
-	var frac := _leader_frac()
-	if frac < next_event_frac or frac >= RaceChaos.LAST_FRAC:
+	if frac < next_event_frac:
 		return
 	_begin_live_event()
 
@@ -1117,6 +1129,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		picked = RaceChaos.LiveEvent.FALSE_GUN
 	elif event.is_action_pressed("chaos_crowd"):
 		picked = RaceChaos.LiveEvent.CROWD_SQUEEZE
+	elif event.is_action_pressed("chaos_raccoon"):
+		picked = RaceChaos.LiveEvent.RACCOON_SNIPER
+	elif event.is_action_pressed("chaos_dive"):
+		picked = RaceChaos.LiveEvent.HAWK_DIVE
+	elif event.is_action_pressed("chaos_chair"):
+		picked = RaceChaos.LiveEvent.LAWN_CHAIR
+	elif event.is_action_pressed("chaos_rocket"):
+		picked = RaceChaos.LiveEvent.BOTTLE_ROCKET
 	if picked == RaceChaos.LiveEvent.NONE:
 		return
 	force_live_event(picked)
@@ -1320,6 +1340,96 @@ func _strike_live_event() -> String:
 					wrecked = snail
 			if wrecked:
 				victim = "%s wrecks on the oil." % wrecked.display_name
+		RaceChaos.LiveEvent.RACCOON_SNIPER:
+			var mark: Snail = get_leader()
+			if mark and (mark.finished or not mark.racing):
+				mark = null
+			for snail in field:
+				if snail.finished or not snail.racing:
+					continue
+				if snail == mark:
+					continue
+				snail.groove = clampf(snail.groove + randf_range(-0.16, 0.22), 0.04, 0.96)
+				snail.vel *= 0.78
+				snail.squish = minf(snail.squish, 0.72)
+				_dump_back(snail, 0.012)
+			if mark:
+				mark.groove = clampf(mark.groove + randf_range(0.18, 0.36), 0.04, 0.96)
+				mark.squish = 0.34
+				mark.vel *= 0.16
+				mark.height_vel = -4.8
+				mark.begin_freeze(randf_range(0.42, 0.72))
+				_dump_back(mark, 0.058)
+				victim = "%s gets sniped." % mark.display_name
+		RaceChaos.LiveEvent.HAWK_DIVE:
+			var plucked: Snail = null
+			for snail in field:
+				if snail.finished or not snail.racing:
+					continue
+				if snail.has_trait(ChickenStock.Trait.HAWK_BLIND):
+					snail.groove = clampf(snail.groove + randf_range(-0.08, 0.10), 0.04, 0.96)
+					continue
+				if plucked == null or snail.distance > plucked.distance:
+					plucked = snail
+			for snail in field:
+				if snail.finished or not snail.racing or snail == plucked:
+					continue
+				if snail.has_trait(ChickenStock.Trait.HAWK_BLIND):
+					continue
+				snail.groove = clampf(snail.groove + randf_range(-0.14, 0.20), 0.04, 0.96)
+				snail.vel *= 0.80
+				snail.squish = minf(snail.squish, 0.70)
+				_dump_back(snail, 0.010)
+			if plucked:
+				plucked.height = 0.52
+				plucked.height_vel = -7.2
+				plucked.squish = 0.30
+				plucked.groove = clampf(plucked.groove + randf_range(0.20, 0.40), 0.04, 0.96)
+				plucked.vel *= 0.14
+				_dump_back(plucked, 0.070)
+				victim = "%s gets plucked." % plucked.display_name
+		RaceChaos.LiveEvent.LAWN_CHAIR:
+			var cluster: Array[Snail] = _biggest_cluster()
+			if cluster.size() < 2:
+				cluster.clear()
+				var leader := get_leader()
+				if leader and leader.racing and not leader.finished:
+					cluster.append(leader)
+				for snail in field:
+					if snail.finished or not snail.racing or cluster.has(snail):
+						continue
+					if cluster.size() >= 3:
+						break
+					cluster.append(snail)
+			var hit: Snail = null
+			for snail in cluster:
+				snail.squish = 0.40
+				snail.vel *= 0.58
+				snail.groove = clampf(snail.groove + randf_range(-0.22, 0.28), 0.04, 0.96)
+				snail.height_vel = -3.4
+				_dump_back(snail, 0.040)
+				if hit == null or snail == get_leader():
+					hit = snail
+			if hit:
+				victim = "%s eats a chair." % hit.display_name
+		RaceChaos.LiveEvent.BOTTLE_ROCKET:
+			var toasted: Snail = get_leader()
+			if toasted and (toasted.finished or not toasted.racing):
+				toasted = null
+			for snail in field:
+				if snail.finished or not snail.racing:
+					continue
+				snail.groove = clampf(snail.groove + randf_range(-0.20, 0.24), 0.04, 0.96)
+				snail.vel *= 0.70
+				snail.squish = minf(snail.squish, 0.66)
+				snail.height = maxf(snail.height, 0.08)
+				snail.height_vel = 2.4
+				_dump_back(snail, 0.014 if snail != toasted else 0.050)
+			if toasted:
+				toasted.squish = 0.36
+				toasted.vel *= 0.22
+				toasted.begin_freeze(randf_range(0.32, 0.58))
+				victim = "%s eats the rocket." % toasted.display_name
 	var victim_snail := _snail_named(victim)
 	last_pack_beat = {
 		"event": live_event,
@@ -1376,9 +1486,9 @@ func _stamp_chaos_tags() -> void:
 			snail.chaos_tag = "PECKING"
 		elif in_grease or in_oil:
 			snail.chaos_tag = "GREASED"
-		elif live_event == RaceChaos.LiveEvent.CROWD_SQUEEZE and snail.squish < 0.84:
+		elif (live_event == RaceChaos.LiveEvent.CROWD_SQUEEZE or live_event == RaceChaos.LiveEvent.LAWN_CHAIR) and snail.squish < 0.84:
 			snail.chaos_tag = "PINNED"
-		elif live_event == RaceChaos.LiveEvent.HAWK or live_event == RaceChaos.LiveEvent.LOOSE_DOG or live_event == RaceChaos.LiveEvent.FALSE_GUN:
+		elif live_event == RaceChaos.LiveEvent.HAWK or live_event == RaceChaos.LiveEvent.HAWK_DIVE or live_event == RaceChaos.LiveEvent.LOOSE_DOG or live_event == RaceChaos.LiveEvent.FALSE_GUN or live_event == RaceChaos.LiveEvent.RACCOON_SNIPER or live_event == RaceChaos.LiveEvent.BOTTLE_ROCKET:
 			snail.chaos_tag = "SPOOKED"
 		elif card_condition == RaceChaos.Condition.DUST_BOWL and snail.groove > 0.58:
 			snail.chaos_tag = "DUSTED"

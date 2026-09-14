@@ -458,7 +458,7 @@ func _on_phase(phase: Game.Phase) -> void:
 			_phase.text = "LIVE · %s  ·  %s" % [Game.race_name(), RaceChaos.condition_name(Game.card_condition()).to_upper()]
 			_help.text = "C pack / your bird / rail  ·  VIP: hold RMB for binoculars"
 			if OS.is_debug_build():
-				_help.text += "  ·  1 Hawk  2 Corn  3 Oil  4 Dog  5 Gun  6 Crowd"
+				_help.text += "  ·  1 Hawk  2 Corn  3 Oil  4 Dog  5 Gun  6 Crowd  7 Sniper  8 Dive  9 Chair  0 Rocket"
 			set_camera_mode(true)
 		Game.Phase.RESULTS:
 			_phase.text = "PHOTO FINISH"
@@ -1824,7 +1824,7 @@ func _punch_yell() -> void:
 func _play_chaos_sting(event_id: int) -> void:
 	if _bang == null:
 		return
-	if event_id == RaceChaos.LiveEvent.FALSE_GUN:
+	if event_id == RaceChaos.LiveEvent.FALSE_GUN or event_id == RaceChaos.LiveEvent.RACCOON_SNIPER:
 		_play_gun()
 		return
 	var rate := 22050
@@ -1837,9 +1837,11 @@ func _play_chaos_sting(event_id: int) -> void:
 		var t := float(i) / float(rate)
 		var s := 0.0
 		match event_id:
-			RaceChaos.LiveEvent.HAWK:
+			RaceChaos.LiveEvent.HAWK, RaceChaos.LiveEvent.HAWK_DIVE:
 				s = sin(TAU * (980.0 - t * 420.0) * t) * exp(-t * 6.5) * 0.72
 				s += sin(TAU * 1480.0 * t) * exp(-t * 14.0) * 0.28
+				if event_id == RaceChaos.LiveEvent.HAWK_DIVE:
+					s += sin(TAU * (1600.0 - t * 900.0) * t) * exp(-t * 5.2) * 0.42
 			RaceChaos.LiveEvent.CORN_RAIN:
 				s = (rng.randf() * 2.0 - 1.0) * exp(-fmod(t * 18.0, 1.0) * 8.0) * 0.55
 				s += sin(TAU * 240.0 * t) * exp(-t * 5.0) * 0.22
@@ -1852,6 +1854,12 @@ func _play_chaos_sting(event_id: int) -> void:
 			RaceChaos.LiveEvent.CROWD_SQUEEZE:
 				s = (rng.randf() * 2.0 - 1.0) * exp(-t * 4.2) * 0.4
 				s += sin(TAU * 48.0 * t) * exp(-t * 3.4) * 0.55
+			RaceChaos.LiveEvent.LAWN_CHAIR:
+				s = (rng.randf() * 2.0 - 1.0) * exp(-fmod(t * 12.0, 1.0) * 6.0) * 0.58
+				s += sin(TAU * 90.0 * t) * exp(-t * 5.5) * 0.32
+			RaceChaos.LiveEvent.BOTTLE_ROCKET:
+				s = sin(TAU * (420.0 + t * 980.0) * t) * exp(-t * 3.8) * 0.62
+				s += (rng.randf() * 2.0 - 1.0) * exp(-t * 8.0) * 0.28
 			_:
 				s = sin(TAU * 420.0 * t) * exp(-t * 10.0) * 0.45
 		samples[i] = clampf(s, -1.0, 1.0)
