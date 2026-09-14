@@ -23,6 +23,7 @@ signal event_callout(text: String, event_id: int)
 const STARTING_CAPS := 100
 const VIP_COST := 25
 const MERCY_LOAN := 20
+const BOTTLECAP_STAKE := 1
 const FIELD_SIZE := 6
 const TRACK_RX := 15.0
 const TRACK_RZ := 10.0
@@ -54,6 +55,9 @@ var yard_feed: float = 0.0
 var entered_id: String = ""
 var meet_index: int = 0
 var _first_card: bool = true
+var last_social_toast: String = ""
+var social_toast_count: int = 0
+var _social_locked: bool = false
 
 
 func _ready() -> void:
@@ -102,6 +106,9 @@ func begin_night() -> void:
 	entered_id = ""
 	meet_index = 0
 	_first_card = true
+	last_social_toast = ""
+	social_toast_count = 0
+	unlock_social_toast()
 	vip_changed.emit(false)
 	money_changed.emit(bottlecaps)
 	bet_changed.emit()
@@ -146,10 +153,14 @@ func new_round() -> void:
 	bet_index = -1
 	entered_id = ""
 	last_results = {}
+	unlock_social_toast()
 	if not _first_card:
 		_wear_coop()
 	if not NetPlay.is_client():
 		NetPlay.entries.clear()
+		NetPlay.clear_slips()
+	if ensure_bottlecap_mercy():
+		toast.emit("House floated you a bottlecap. Stay in the night.")
 	bet_changed.emit()
 	_roll_market()
 	open_clock = OPEN_WINDOW
@@ -206,6 +217,7 @@ func pack_meet() -> Dictionary:
 		"event_t": float(chaos.get("event_t", 0.0)),
 		"event_dur": float(chaos.get("event_dur", 0.0)),
 		"event_at": float(chaos.get("event_at", 0.0)),
+		"slips": NetPlay.pack_slips(),
 	}
 
 
@@ -250,6 +262,8 @@ func apply_meet(payload: Dictionary) -> void:
 	var manager = get_tree().get_first_node_in_group("race_manager")
 	if manager and manager.has_method("apply_chaos_state"):
 		manager.apply_chaos_state(payload)
+	if payload.has("slips"):
+		NetPlay.apply_packed_slips(payload.get("slips", []))
 	meet_changed.emit()
 
 
@@ -260,17 +274,36 @@ func clear_bet() -> void:
 		bet_index = -1
 		money_changed.emit(bottlecaps)
 		bet_changed.emit()
+		NetPlay.submit_slip(-1, 0)
 		return
 	bet_amount = 0
 	bet_index = -1
 	bet_changed.emit()
+	NetPlay.submit_slip(-1, 0)
+
+
+func purse() -> int:
+	return bottlecaps + bet_amount
+
+
+func ensure_bottlecap_mercy() -> bool:
+	if purse() > 0:
+		return false
+	bottlecaps = BOTTLECAP_STAKE
+	money_changed.emit(bottlecaps)
+	return true
 
 
 func place_bet(index: int, amount: int) -> bool:
 	if phase != Phase.OPEN:
 		toast.emit("Too late. They're lining up.")
 		return false
-	if index < 0 or amount <= 0:
+	if index < 0:
+		return false
+	var floated := ensure_bottlecap_mercy()
+	if floated:
+		amount = BOTTLECAP_STAKE
+	if amount <= 0:
 		return false
 	if amount > bottlecaps + bet_amount:
 		toast.emit("That's more tin than you've got.")
@@ -282,7 +315,11 @@ func place_bet(index: int, amount: int) -> bool:
 	bet_amount = amount
 	money_changed.emit(bottlecaps)
 	bet_changed.emit()
-	toast.emit("Slip taken: %d caps on #%d." % [amount, index + 1])
+	NetPlay.submit_slip(index, amount)
+	if floated:
+		toast.emit("House floated you a bottlecap. Slip on #%d." % (index + 1))
+	else:
+		toast.emit("Slip taken: %d caps on #%d." % [amount, index + 1])
 	return true
 
 
@@ -606,6 +643,27 @@ func event_announce(text: String, event_id: int = 0) -> void:
 		return
 	_announce_cd = 1.4
 	event_callout.emit(text, event_id)
+
+
+func social_toast_for_event(event: int, victim_index: int = -1) -> String:
+	var manager = get_tree().get_first_node_in_group("race_manager")
+	var birds: Array = []
+	if manager and manager.has_method("pack_field_chemistry"):
+		birds = manager.pack_field_chemistry()
+	return RaceChaos.social_spice_toast(NetPlay.visible_bets(), birds, event, victim_index)
+
+
+func note_social_toast(text: String) -> void:
+	if text.is_empty() or _social_locked:
+		return
+	_social_locked = true
+	last_social_toast = text
+	social_toast_count += 1
+	toast.emit(text)
+
+
+func unlock_social_toast() -> void:
+	_social_locked = false
 
 
 func set_ui_open(open: bool) -> void:

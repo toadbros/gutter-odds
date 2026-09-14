@@ -27,11 +27,15 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--sep-smoke"):
 		_run_sep_smoke()
 		return
+	if OS.get_cmdline_user_args().has("--social-smoke"):
+		_run_social_smoke()
+		return
 	_run_headless_smoke()
 
 
 func _run_headless_smoke() -> void:
 	print("SMOKE: net_smooth=", "ok" if NetSmooth.smoke_check() else "FAIL")
+	_assert_social_copy()
 	var cards := {"n": 0}
 	Game.results_ready.connect(func(payload: Dictionary) -> void:
 		cards.n += 1
@@ -99,6 +103,7 @@ func _run_headless_smoke() -> void:
 			if Game.phase != Game.Phase.OPEN:
 				return
 			Game.place_bet(0, 10)
+			_print_visible_bets_smoke()
 			# First card proves the window slams itself. Later cards lock early.
 			if cards.n == 0:
 				Game.open_clock = 0.2
@@ -355,6 +360,207 @@ func _expect_tell(arch: int, traits: Array, condition: int, event: int, want: St
 	print("SMOKE: tell_", label, "=", got)
 	if got != want:
 		push_error("SMOKE: tell %s want [%s] got [%s]" % [label, want, got])
+
+
+func _print_visible_bets_smoke() -> void:
+	var rows: Array = NetPlay.visible_bets()
+	print("SMOKE: visible_bets=", rows.size())
+	for row in rows:
+		print("SMOKE: slip=", row.get("name", "?"), " idx=", row.get("index", -1), " amt=", row.get("amount", 0))
+	if rows.is_empty():
+		push_error("SMOKE: visible bets payload empty")
+	var local := rows[0]
+	if int(local.get("amount", 0)) <= 0 or int(local.get("index", -1)) < 0:
+		push_error("SMOKE: local slip missing from visible bets")
+
+
+func _run_social_smoke() -> void:
+	_assert_social_copy()
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: social phase=", phase)
+		if phase == Game.Phase.OPEN:
+			await _probe_social_open()
+		elif phase == Game.Phase.RACE:
+			await _probe_social_race()
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _assert_social_copy() -> void:
+	var oil := RaceChaos.LiveEvent.OIL_SLICK
+	var corn := RaceChaos.LiveEvent.CORN_RAIN
+	var dog := RaceChaos.LiveEvent.LOOSE_DOG
+	var hawk := RaceChaos.LiveEvent.HAWK
+	var bang := RaceChaos.LiveEvent.FALSE_GUN
+	if not RaceChaos.has_live_chemistry(0, [], oil):
+		push_error("SMOKE: sprinter oil chemistry missing")
+	if not RaceChaos.has_live_chemistry(2, [ChickenStock.Trait.CORN_FIEND], corn):
+		push_error("SMOKE: chaos corn chemistry missing")
+	if not RaceChaos.has_live_chemistry(1, [], dog):
+		push_error("SMOKE: steady dog chemistry missing")
+	if not RaceChaos.has_live_chemistry(3, [], hawk):
+		push_error("SMOKE: late hawk chemistry missing")
+	if not RaceChaos.has_live_chemistry(0, [ChickenStock.Trait.HAWK_BLIND], hawk):
+		push_error("SMOKE: hawk-blind chemistry missing")
+	if not RaceChaos.has_live_chemistry(0, [], bang):
+		push_error("SMOKE: sprinter gun chemistry missing")
+	if RaceChaos.has_live_chemistry(1, [], oil):
+		push_error("SMOKE: steady should not oil-chem")
+	if RaceChaos.has_live_chemistry(0, [], RaceChaos.LiveEvent.CROWD_SQUEEZE):
+		push_error("SMOKE: crowd squeeze is not a tell pair")
+	var birds: Array = [
+		{"archetype": 0, "traits": [], "name": "Quick Nickel"},
+		{"archetype": 3, "traits": [], "name": "Churchyard"},
+	]
+	var called := RaceChaos.social_spice_toast(
+		[{"name": "Seat1", "index": 0, "amount": 10}],
+		birds,
+		oil,
+		1
+	)
+	print("SMOKE: called_copy=", called)
+	if called != RaceChaos.social_called_line("Seat1", oil):
+		push_error("SMOKE: called-it copy drifted")
+	var shame := RaceChaos.social_spice_toast(
+		[{"name": "Seat2", "index": 1, "amount": 10}],
+		birds,
+		oil,
+		1
+	)
+	print("SMOKE: shame_copy=", shame)
+	if shame != RaceChaos.social_shame_line("Seat2", oil):
+		push_error("SMOKE: shame copy drifted")
+	var none := RaceChaos.social_spice_toast(
+		[{"name": "Seat3", "index": 0, "amount": 10}],
+		[{"archetype": 3, "traits": []}],
+		oil,
+		0
+	)
+	if not none.is_empty():
+		push_error("SMOKE: toast without chemistry hit")
+	var stacked := RaceChaos.social_spice_toast(
+		[
+			{"name": "Seat1", "index": 0, "amount": 10},
+			{"name": "Seat2", "index": 1, "amount": 25},
+		],
+		birds,
+		oil,
+		1
+	)
+	if stacked != called:
+		push_error("SMOKE: called-it should beat shame when both match")
+	print("SMOKE: social copy ok")
+
+
+func _probe_social_open() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	if manager == null or manager.field.is_empty():
+		push_error("SMOKE: no field for social board")
+		get_tree().quit()
+		return
+	Game.bottlecaps = 0
+	Game.bet_amount = 0
+	Game.bet_index = -1
+	Game.money_changed.emit(Game.bottlecaps)
+	var floated := Game.place_bet(0, 10)
+	print(
+		"SMOKE: mercy ok=", floated,
+		" amount=", Game.bet_amount,
+		" caps=", Game.bottlecaps,
+		" stake=", Game.BOTTLECAP_STAKE
+	)
+	if not floated or Game.bet_amount != Game.BOTTLECAP_STAKE:
+		push_error("SMOKE: bottlecap mercy failed at 0 bankroll")
+	if Game.bottlecaps != 0:
+		push_error("SMOKE: floated bottlecap was not staked")
+	var rows: Array = NetPlay.stamp_social_smoke_seats()
+	print("SMOKE: table_seats=", rows.size())
+	if rows.size() != 6:
+		push_error("SMOKE: visible bets want 6 seats got %d" % rows.size())
+	for i in rows.size():
+		var row: Dictionary = rows[i]
+		print(
+			"SMOKE: seat=", row.get("name", "?"),
+			" bird=#", int(row.get("index", -1)) + 1,
+			" amt=", row.get("amount", 0)
+		)
+		if str(row.get("name", "")) != "Seat%d" % (i + 1):
+			push_error("SMOKE: seat name drifted")
+		if int(row.get("amount", 0)) <= 0:
+			push_error("SMOKE: seat %d has no slip" % (i + 1))
+	var hud := get_tree().get_first_node_in_group("hud")
+	if hud and hud.has_method("table_slip_rows"):
+		var ui: PackedStringArray = hud.call("table_slip_rows")
+		print("SMOKE: hud_slips=", ui.size())
+		for line in ui:
+			print("SMOKE: hud_slip=", line)
+		if ui.size() != 6:
+			push_error("SMOKE: HUD table slips %d want 6" % ui.size())
+	var sprinter := _first_arch_index(manager, 0)
+	if sprinter < 0:
+		push_error("SMOKE: no sprinter on the card")
+		get_tree().quit()
+		return
+	NetPlay.slips[1] = {"id": 1, "name": "Seat1", "index": sprinter, "amount": 10}
+	for pid in range(2, 7):
+		NetPlay.slips[pid]["index"] = (sprinter + 1) % manager.field.size()
+	NetPlay.slips_changed.emit()
+	print("SMOKE: caller=Seat1 on #", sprinter + 1)
+	Game.ring_the_bell()
+
+
+func _probe_social_race() -> void:
+	await get_tree().create_timer(0.12).timeout
+	var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+	if manager == null:
+		push_error("SMOKE: no race manager for social toast")
+		get_tree().quit()
+		return
+	if not manager.racing:
+		manager.start_race()
+		await get_tree().process_frame
+	Game.unlock_social_toast()
+	Game.social_toast_count = 0
+	Game.last_social_toast = ""
+	manager.force_live_event(RaceChaos.LiveEvent.OIL_SLICK)
+	print(
+		"SMOKE: social_toast=", Game.last_social_toast,
+		" count=", Game.social_toast_count,
+		" live=", manager.live_event
+	)
+	if Game.social_toast_count != 1:
+		push_error("SMOKE: want one social toast got %d" % Game.social_toast_count)
+	if not Game.last_social_toast.contains("called the skillet"):
+		push_error("SMOKE: forced oil missing called-it toast")
+	if not Game.last_social_toast.contains("Seat1"):
+		push_error("SMOKE: called-it toast missing seat name")
+	Game.note_social_toast("spam stack")
+	if Game.social_toast_count != 1 or Game.last_social_toast.contains("spam"):
+		push_error("SMOKE: social toast stacked on the same live event")
+	var shame_birds: Array = manager.pack_field_chemistry()
+	var victim := int(manager.last_pack_beat.get("victim_index", -1))
+	var shame := RaceChaos.social_spice_toast(
+		[{"name": "Seat6", "index": victim if victim >= 0 else 1, "amount": 10}],
+		shame_birds,
+		RaceChaos.LiveEvent.OIL_SLICK,
+		victim
+	)
+	print("SMOKE: shame_live=", shame, " victim=", victim)
+	NetPlay.roster.clear()
+	NetPlay.slips.clear()
+	print("SMOKE: social spice ok")
+	get_tree().quit()
+
+
+func _first_arch_index(manager: RaceManager, arch: int) -> int:
+	for i in manager.field.size():
+		if int(manager.field[i].archetype) == arch:
+			return i
+	return -1
 
 
 func _run_feel_smoke() -> void:

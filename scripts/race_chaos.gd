@@ -135,6 +135,128 @@ static func card_tell(arch: int, traits: Variant, condition: int, event: int = L
 	return ""
 
 
+# Same W2-T1 pairs, live event only. Do not invent a second chemistry wiki.
+static func has_live_chemistry(arch: int, traits: Variant, event: int) -> bool:
+	if event <= 0:
+		return false
+	var live := card_tell(arch, traits, Condition.FAIR_DIRT, event)
+	match event:
+		LiveEvent.CORN_RAIN:
+			return live == TELL_CHAOS_CORN or live == TELL_HUNGRY_CORN
+		LiveEvent.OIL_SLICK:
+			return live == TELL_SPRINTER_OIL or live == TELL_GREASE_LUCKY
+		LiveEvent.LOOSE_DOG:
+			return live == TELL_STEADY_DOG
+		LiveEvent.HAWK:
+			return live == TELL_HAWK_BLIND or live == TELL_LATE_HAWK
+		LiveEvent.FALSE_GUN:
+			return live == TELL_SPRINTER_GUN
+	return false
+
+
+static func social_called_line(trainer: String, event: int) -> String:
+	var who := trainer if not trainer.is_empty() else "Someone"
+	match event:
+		LiveEvent.CORN_RAIN:
+			return "%s called it. Corn was bait." % who
+		LiveEvent.OIL_SLICK:
+			return "%s called the skillet." % who
+		LiveEvent.LOOSE_DOG:
+			return "%s called the dog." % who
+		LiveEvent.HAWK:
+			return "%s called the hawk." % who
+		LiveEvent.FALSE_GUN:
+			return "%s called the fake bang." % who
+	return "%s called it." % who
+
+
+static func social_shame_line(trainer: String, event: int) -> String:
+	var who := trainer if not trainer.is_empty() else "Someone"
+	match event:
+		LiveEvent.CORN_RAIN:
+			return "%s bet the bird that stopped for corn. Shame." % who
+		LiveEvent.OIL_SLICK:
+			return "%s's slip just drowned in oil. Shame." % who
+		LiveEvent.LOOSE_DOG:
+			return "%s picked the rail. Shame." % who
+		LiveEvent.HAWK:
+			return "%s bet the flop. Shame." % who
+		LiveEvent.FALSE_GUN:
+			return "%s picked the wrong bang. Shame." % who
+	return "%s picked the victim. Shame." % who
+
+
+# One line. Called-it beats shame. Empty if tonight's live event has no tell-pair hit.
+static func social_spice_toast(slips: Array, birds: Array, event: int, victim_index: int = -1) -> String:
+	if event <= 0:
+		return ""
+	var chem_any := false
+	for bird in birds:
+		if not bird is Dictionary:
+			continue
+		if has_live_chemistry(int(bird.get("archetype", -1)), bird.get("traits", []), event):
+			chem_any = true
+			break
+	if not chem_any:
+		return ""
+	var called := _first_slip_on_chemistry(slips, birds, event)
+	if not called.is_empty():
+		return social_called_line(str(called.get("name", "Someone")), event)
+	var shame := _first_slip_on_index(slips, victim_index)
+	if shame.is_empty():
+		shame = _first_wrong_side_slip(slips, birds, event)
+	if not shame.is_empty():
+		return social_shame_line(str(shame.get("name", "Someone")), event)
+	return ""
+
+
+static func _first_slip_on_chemistry(slips: Array, birds: Array, event: int) -> Dictionary:
+	for slip in slips:
+		if not slip is Dictionary:
+			continue
+		if int(slip.get("amount", 0)) <= 0:
+			continue
+		var idx := int(slip.get("index", -1))
+		if idx < 0 or idx >= birds.size():
+			continue
+		var bird: Variant = birds[idx]
+		if not bird is Dictionary:
+			continue
+		if has_live_chemistry(int(bird.get("archetype", -1)), bird.get("traits", []), event):
+			return slip
+	return {}
+
+
+static func _first_slip_on_index(slips: Array, index: int) -> Dictionary:
+	if index < 0:
+		return {}
+	for slip in slips:
+		if not slip is Dictionary:
+			continue
+		if int(slip.get("amount", 0)) <= 0:
+			continue
+		if int(slip.get("index", -1)) == index:
+			return slip
+	return {}
+
+
+static func _first_wrong_side_slip(slips: Array, birds: Array, event: int) -> Dictionary:
+	for slip in slips:
+		if not slip is Dictionary:
+			continue
+		if int(slip.get("amount", 0)) <= 0:
+			continue
+		var idx := int(slip.get("index", -1))
+		if idx < 0 or idx >= birds.size():
+			continue
+		var bird: Variant = birds[idx]
+		if not bird is Dictionary:
+			continue
+		if not has_live_chemistry(int(bird.get("archetype", -1)), bird.get("traits", []), event):
+			return slip
+	return {}
+
+
 static func event_callout(event: int) -> String:
 	match event:
 		LiveEvent.OIL_SLICK:
