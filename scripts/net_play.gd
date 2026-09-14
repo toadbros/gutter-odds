@@ -3,6 +3,7 @@ extends Node
 signal status_changed(text: String)
 signal peers_changed
 signal lobby_changed
+signal slips_changed
 
 const DEFAULT_PORT := 7777
 const MAX_PESTS := 6
@@ -10,6 +11,7 @@ const MAX_PESTS := 6
 var status: String = "Solo barn"
 var entries: Dictionary = {}
 var roster: Dictionary = {}
+var slips: Dictionary = {}
 var local_name: String = "Trainer"
 var host_port: int = DEFAULT_PORT
 var join_ip: String = "127.0.0.1"
@@ -145,6 +147,7 @@ func close() -> void:
 	_closing = true
 	entries.clear()
 	roster.clear()
+	slips.clear()
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = null
@@ -230,6 +233,124 @@ func broadcast_field(payload: Array) -> void:
 	rpc_field.rpc(payload)
 
 
+func submit_slip(index: int, amount: int) -> void:
+	var payload := {"index": index, "amount": amount}
+	if is_client():
+		_write_slip(local_id(), payload)
+		slips_changed.emit()
+		rpc_id(1, "rpc_submit_slip", payload)
+	else:
+		_accept_slip(local_id(), payload)
+
+
+func clear_slips() -> void:
+	slips.clear()
+	_sync_slips()
+
+
+func pack_slips() -> Array:
+	var packed: Array = []
+	var ids: Array = slips.keys()
+	ids.sort()
+	for pid in ids:
+		var row: Dictionary = slips[pid]
+		packed.append({
+			"id": int(pid),
+			"name": trainer_name(int(pid)),
+			"index": int(row.get("index", -1)),
+			"amount": int(row.get("amount", 0)),
+		})
+	return packed
+
+
+func apply_packed_slips(packed: Array) -> void:
+	_apply_slips(packed)
+	slips_changed.emit()
+
+
+func visible_bets() -> Array:
+	if not roster.is_empty():
+		var out: Array = []
+		var ids: Array = roster.keys()
+		ids.sort()
+		for pid in ids:
+			var slip: Dictionary = slips.get(int(pid), {})
+			out.append({
+				"id": int(pid),
+				"name": trainer_name(int(pid)),
+				"index": int(slip.get("index", -1)),
+				"amount": int(slip.get("amount", 0)),
+			})
+		return out
+	if not slips.is_empty():
+		return pack_slips()
+	return [{
+		"id": local_id(),
+		"name": local_name,
+		"index": Game.bet_index,
+		"amount": Game.bet_amount,
+	}]
+
+
+func stamp_social_smoke_seats() -> Array:
+	roster.clear()
+	slips.clear()
+	for i in 6:
+		var pid := i + 1
+		roster[pid] = {"name": "Seat%d" % pid, "ready": true}
+		slips[pid] = {
+			"id": pid,
+			"name": "Seat%d" % pid,
+			"index": i,
+			"amount": 5 + i * 5,
+		}
+	slips_changed.emit()
+	return visible_bets()
+
+
+func _write_slip(peer_id: int, payload: Dictionary) -> void:
+	var amount := int(payload.get("amount", 0))
+	var index := int(payload.get("index", -1))
+	if amount <= 0 or index < 0:
+		slips.erase(peer_id)
+		return
+	slips[peer_id] = {
+		"id": peer_id,
+		"name": trainer_name(peer_id),
+		"index": index,
+		"amount": amount,
+	}
+
+
+func _accept_slip(peer_id: int, payload: Dictionary) -> void:
+	if Game.phase != Game.Phase.OPEN:
+		return
+	_write_slip(peer_id, payload)
+	_sync_slips()
+
+
+func _apply_slips(packed: Array) -> void:
+	slips.clear()
+	for row in packed:
+		if not row is Dictionary:
+			continue
+		var pid := int(row.get("id", 0))
+		if pid <= 0:
+			continue
+		slips[pid] = {
+			"id": pid,
+			"name": str(row.get("name", trainer_name(pid))),
+			"index": int(row.get("index", -1)),
+			"amount": int(row.get("amount", 0)),
+		}
+
+
+func _sync_slips() -> void:
+	if is_server() and is_online() and not multiplayer.get_peers().is_empty():
+		rpc_table_slips.rpc(pack_slips())
+	slips_changed.emit()
+
+
 @rpc("any_peer", "call_remote", "reliable")
 func rpc_hello(player_name: String) -> void:
 	if not multiplayer.is_server():
@@ -300,6 +421,20 @@ func rpc_scratch_entry() -> void:
 	if not multiplayer.is_server():
 		return
 	_drop_entry(multiplayer.get_remote_sender_id())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func rpc_submit_slip(payload: Dictionary) -> void:
+	if not multiplayer.is_server():
+		return
+	_accept_slip(multiplayer.get_remote_sender_id(), payload)
+
+
+@rpc("authority", "call_remote", "reliable")
+func rpc_table_slips(packed: Array) -> void:
+	_apply_slips(packed)
+	slips_changed.emit()
+	Game.bet_changed.emit()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -447,6 +582,7 @@ func _on_peer_connected(id: int) -> void:
 func _on_peer_disconnected(id: int) -> void:
 	entries.erase(id)
 	roster.erase(id)
+	slips.erase(id)
 	_despawn_puppet(id)
 	if is_server():
 		# Live cards keep the field as-is so survivors don't get a countdown
@@ -454,6 +590,7 @@ func _on_peer_disconnected(id: int) -> void:
 		if not Game.is_live_card():
 			get_tree().call_group("race_manager", "apply_player_entries")
 		_sync_entries()
+		_sync_slips()
 		_broadcast_roster()
 		_set_status("Someone walked off with their crate.")
 	peers_changed.emit()

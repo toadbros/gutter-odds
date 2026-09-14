@@ -75,6 +75,8 @@ var _results_hint: Label
 var _next_card_btn: Button
 var _field_card: Control
 var _field_list: VBoxContainer
+var _table_board: Control
+var _table_list: VBoxContainer
 
 
 func _ready() -> void:
@@ -100,6 +102,7 @@ func _ready() -> void:
 	NetPlay.status_changed.connect(_on_net)
 	NetPlay.lobby_changed.connect(_fill_lobby)
 	NetPlay.peers_changed.connect(_fill_lobby)
+	NetPlay.slips_changed.connect(_refresh_table_slips)
 	_on_money(Game.bottlecaps)
 	_on_phase(Game.phase)
 	_refresh_slip()
@@ -418,6 +421,7 @@ func _on_phase(phase: Game.Phase) -> void:
 		_caps.visible = not Game.is_sitting()
 	_standings.visible = phase == Game.Phase.RACE or phase == Game.Phase.RESULTS
 	_refresh_field_card()
+	_refresh_table_slips()
 	_cam_mode.visible = phase == Game.Phase.RACE or phase == Game.Phase.COUNTDOWN or phase == Game.Phase.RESULTS
 	_help.visible = not Game.is_sitting()
 	if phase != Game.Phase.RESULTS and _results:
@@ -495,6 +499,7 @@ func _on_countdown(seconds: int) -> void:
 func _on_bet_changed() -> void:
 	_refresh_slip()
 	_refresh_field_card()
+	_refresh_table_slips()
 	if _bookie and _bookie.visible:
 		_fill_bookie()
 
@@ -617,6 +622,59 @@ func field_card_count() -> int:
 	return n
 
 
+func table_slip_rows() -> PackedStringArray:
+	var rows: PackedStringArray = []
+	for row in NetPlay.visible_bets():
+		if row is Dictionary:
+			rows.append(_slip_line(row))
+	return rows
+
+
+func table_board_count() -> int:
+	if _table_board == null or _table_list == null or not _table_board.visible:
+		return 0
+	var n := 0
+	for child in _table_list.get_children():
+		if child is Label and not child.is_queued_for_deletion():
+			n += 1
+	return n
+
+
+func _slip_line(row: Dictionary) -> String:
+	var who := str(row.get("name", "Trainer"))
+	var amount := int(row.get("amount", 0))
+	var idx := int(row.get("index", -1))
+	if amount <= 0 or idx < 0:
+		return "%s  ·  watching" % who
+	var bird := "#%d" % (idx + 1)
+	var manager := _manager()
+	if manager and idx >= 0 and idx < manager.field.size():
+		bird = manager.field[idx].display_name
+	return "%s  ·  %d on %s" % [who, amount, bird]
+
+
+func _refresh_table_slips() -> void:
+	if _table_board == null or _table_list == null:
+		return
+	var show := (Game.phase == Game.Phase.OPEN or Game.phase == Game.Phase.COUNTDOWN) and not Game.is_sitting()
+	_table_board.visible = show
+	for child in _table_list.get_children():
+		child.queue_free()
+	if not show:
+		return
+	for row in NetPlay.visible_bets():
+		if not row is Dictionary:
+			continue
+		var line := Label.new()
+		line.text = _slip_line(row)
+		var live := int(row.get("amount", 0)) > 0 and int(row.get("index", -1)) >= 0
+		line.add_theme_color_override("font_color", BRASS if live else MUTED)
+		line.add_theme_font_size_override("font_size", 15)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		line.custom_minimum_size = Vector2(300, 22)
+		_table_list.add_child(line)
+
+
 func _highlight_bookie() -> void:
 	var n := 0
 	for child in _bookie_list.get_children():
@@ -637,12 +695,21 @@ func _refresh_confirm() -> void:
 		var snail: Snail = manager.field[_selected_snail]
 		name = snail.display_name
 		odds = snail.odds
-	var amount := Game.bottlecaps + Game.bet_amount if _stake < 0 else _stake
-	amount = mini(amount, Game.bottlecaps + Game.bet_amount)
+	var purse := Game.purse()
+	var amount := purse if _stake < 0 else _stake
+	if purse <= 0:
+		amount = Game.BOTTLECAP_STAKE
+	else:
+		amount = mini(amount, purse)
 	var pay := amount + int(amount * odds.x / maxi(odds.y, 1))
-	_confirm_btn.text = "Stuff the slip  ·  %d on %s  ·  pays %d" % [amount, name, pay]
-	if _stake_label:
-		_stake_label.text = "Stake: %s caps" % ("ALL IN" if _stake < 0 else str(_stake))
+	if purse <= 0:
+		_confirm_btn.text = "Stuff a bottlecap  ·  1 on %s  ·  house mercy" % name
+		if _stake_label:
+			_stake_label.text = "Stake: bottlecap  ·  you're broke"
+	else:
+		_confirm_btn.text = "Stuff the slip  ·  %d on %s  ·  pays %d" % [amount, name, pay]
+		if _stake_label:
+			_stake_label.text = "Stake: %s caps" % ("ALL IN" if _stake < 0 else str(_stake))
 
 
 func _highlight_stakes() -> void:
@@ -656,10 +723,13 @@ func _highlight_stakes() -> void:
 
 
 func _confirm_bet() -> void:
-	var amount := Game.bottlecaps + Game.bet_amount if _stake < 0 else _stake
+	var amount := Game.purse() if _stake < 0 else _stake
+	if Game.purse() <= 0:
+		amount = Game.BOTTLECAP_STAKE
 	if Game.place_bet(_selected_snail, amount):
 		_refresh_slip()
 		_refresh_confirm()
+		_refresh_table_slips()
 
 
 func _manager() -> RaceManager:
@@ -788,6 +858,7 @@ func _build() -> void:
 	_standings.visible = false
 	root.add_child(_standings)
 	_field_card = _build_field_card(root)
+	_table_board = _build_table_board(root)
 
 	_binoculars = ColorRect.new()
 	_binoculars.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1166,6 +1237,41 @@ func _build_field_card(root: Control) -> Control:
 	_field_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_field_list.add_theme_constant_override("separation", 4)
 	scroll.add_child(_field_list)
+	root.add_child(panel)
+	return panel
+
+
+func _build_table_board(root: Control) -> Control:
+	var panel := Panel.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.05, 0.04, 0.88)
+	style.border_color = BRASS
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	panel.offset_left = -360
+	panel.offset_right = -24
+	panel.offset_top = 256
+	panel.offset_bottom = 500
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.visible = false
+	var title := _label(panel, "THE TABLE", 16, Vector2(14, 8), BRASS)
+	title.size = Vector2(300, 22)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(10, 32)
+	scroll.size = Vector2(316, 200)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(scroll)
+	_table_list = VBoxContainer.new()
+	_table_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_table_list.add_theme_constant_override("separation", 2)
+	scroll.add_child(_table_list)
 	root.add_child(panel)
 	return panel
 

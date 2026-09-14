@@ -329,6 +329,9 @@ func apply_network_event(payload: Dictionary) -> void:
 		line = victim
 	if not line.is_empty():
 		Game.event_announce(line, live_event)
+	var spice := str(payload.get("social_toast", ""))
+	if not spice.is_empty():
+		Game.note_social_toast(spice)
 	var victim_snail := _snail_named(victim)
 	_body_beat(victim_snail)
 
@@ -1176,6 +1179,10 @@ func _fire_live_event(picked: int, consume: bool) -> void:
 	var line := RaceChaos.event_callout(live_event)
 	var shown := victim if not victim.is_empty() else line
 	Game.event_announce(shown, live_event)
+	var victim_idx := int(last_pack_beat.get("victim_index", -1))
+	var spice := Game.social_toast_for_event(live_event, victim_idx)
+	if not spice.is_empty():
+		Game.note_social_toast(spice)
 	get_tree().call_group("stadium", "show_live_event", live_event, event_at)
 	_body_beat(_snail_named(victim))
 	NetPlay.send_race_event({
@@ -1186,6 +1193,8 @@ func _fire_live_event(picked: int, consume: bool) -> void:
 		"event_at": event_at,
 		"callout": shown,
 		"victim": victim,
+		"victim_index": victim_idx,
+		"social_toast": spice,
 		"ended": false,
 	})
 
@@ -1311,11 +1320,13 @@ func _strike_live_event() -> String:
 					wrecked = snail
 			if wrecked:
 				victim = "%s wrecks on the oil." % wrecked.display_name
+	var victim_snail := _snail_named(victim)
 	last_pack_beat = {
 		"event": live_event,
 		"lead_before": lead_before,
 		"lead_after": lead_name(),
 		"victim": victim,
+		"victim_index": victim_snail.snail_id if victim_snail else -1,
 		"flipped": lead_before != lead_name() and not lead_name().is_empty(),
 	}
 	return victim
@@ -1375,8 +1386,21 @@ func _stamp_chaos_tags() -> void:
 			snail.chaos_tag = ""
 
 
+func pack_field_chemistry() -> Array:
+	var birds: Array = []
+	for snail in field:
+		birds.append({
+			"archetype": int(snail.archetype),
+			"traits": snail.traits.duplicate(),
+			"name": snail.display_name,
+			"index": snail.snail_id,
+		})
+	return birds
+
+
 func _clear_live_event(broadcast: bool) -> void:
 	var had := live_event != RaceChaos.LiveEvent.NONE
+	Game.unlock_social_toast()
 	live_event = RaceChaos.LiveEvent.NONE
 	event_t = 0.0
 	event_dur = 0.0
