@@ -84,6 +84,7 @@ var _voice: AudioStreamPlayer3D
 var _head_rest: Vector3 = Vector3.ZERO
 var _squawk_cd: float = 0.0
 var net_smooth: NetSmooth = NetSmooth.new()
+static var _squawk_bank: Array[AudioStreamWAV] = []
 
 
 func _ready() -> void:
@@ -632,7 +633,10 @@ func _tick_squawk(delta: float, rushing: bool) -> void:
 	if _squawk_cd > 0.0:
 		return
 	_squawk_cd = randf_range(0.42, 1.15)
-	_voice.stream = _make_squawk(snail_id * 17 + int(_wag * 10.0))
+	if _squawk_bank.is_empty():
+		for i in 8:
+			_squawk_bank.append(_make_squawk(110 + i * 17))
+	_voice.stream = _squawk_bank[randi() % _squawk_bank.size()]
 	_voice.pitch_scale = randf_range(0.92, 1.12)
 	_voice.play()
 
