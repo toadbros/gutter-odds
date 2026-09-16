@@ -6,6 +6,9 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--sep-demo"):
 		_run_sep_demo()
 		return
+	if OS.get_cmdline_user_args().has("--run-demo"):
+		_run_run_demo()
+		return
 	if DisplayServer.get_name() != "headless":
 		return
 	if OS.get_cmdline_user_args().has("--chaos-smoke"):
@@ -23,6 +26,9 @@ func _ready() -> void:
 		return
 	if OS.get_cmdline_user_args().has("--tell-smoke"):
 		_run_tell_smoke()
+		return
+	if OS.get_cmdline_user_args().has("--run-smoke"):
+		_run_run_smoke()
 		return
 	if OS.get_cmdline_user_args().has("--sep-smoke"):
 		_run_sep_smoke()
@@ -721,6 +727,17 @@ func _probe_feel_race() -> void:
 	get_tree().quit()
 
 
+func _run_run_demo() -> void:
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		if phase == Game.Phase.OPEN:
+			await get_tree().process_frame
+			Game.ring_the_bell()
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
 func _run_sep_demo() -> void:
 	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
 		if phase == Game.Phase.OPEN:
@@ -737,6 +754,114 @@ func _run_sep_demo() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	Game.begin_night()
+
+
+func _run_run_smoke() -> void:
+	print("SMOKE: net_smooth=", "ok" if NetSmooth.smoke_check() else "FAIL")
+	Game.phase_changed.connect(func(phase: Game.Phase) -> void:
+		print("SMOKE: run phase=", phase)
+		if phase != Game.Phase.OPEN:
+			return
+		await get_tree().process_frame
+		await get_tree().process_frame
+		var manager := get_tree().get_first_node_in_group("race_manager") as RaceManager
+		if manager == null or manager.field.size() < 2:
+			push_error("SMOKE: no field for run feel")
+			get_tree().quit()
+			return
+		_probe_sep_pack(manager)
+		_probe_sep_chase(manager)
+		_probe_sep_client_interp(manager)
+		manager.force_card_condition(RaceChaos.Condition.FAIR_DIRT)
+		manager.events_left = 0
+		manager.rare_pending = RaceChaos.LiveEvent.NONE
+		manager.move_to_gates()
+		manager.start_race()
+		var sprint_best: Dictionary = {}
+		for _i in 36:
+			await get_tree().process_frame
+			_accumulate_sprint_feel(manager, sprint_best)
+		_probe_sprint_feel(manager, sprint_best)
+		print("SMOKE: run done")
+		get_tree().quit()
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Game.begin_night()
+
+
+func _accumulate_sprint_feel(manager: RaceManager, best: Dictionary) -> void:
+	for snail in manager.field:
+		var snap: Dictionary = snail.run_feel_snapshot()
+		var key := snail.display_name
+		var row: Dictionary = best.get(key, {})
+		row["gait"] = maxf(float(row.get("gait", 0.0)), float(snap.get("gait", 0.0)))
+		row["body_pitch"] = minf(float(row.get("body_pitch", 9.0)), float(snap.get("body_pitch", 0.0)))
+		row["body_yaw"] = maxf(float(row.get("body_yaw", 0.0)), absf(float(snap.get("body_yaw", 0.0))))
+		row["head_pitch"] = minf(float(row.get("head_pitch", 9.0)), float(snap.get("head_pitch", 0.0)))
+		row["head_z"] = minf(float(row.get("head_z", 9.0)), float(snap.get("head_z", 0.0)))
+		row["leg_swing"] = maxf(float(row.get("leg_swing", 0.0)), float(snap.get("leg_swing", 0.0)))
+		row["sweat"] = bool(row.get("sweat", false)) or bool(snap.get("sweat", false))
+		row["voice"] = bool(row.get("voice", false)) or bool(snap.get("voice", false))
+		row["squawking"] = bool(row.get("squawking", false)) or bool(snap.get("squawking", false))
+		row["halted"] = bool(snap.get("halted", false))
+		row["finished"] = bool(snap.get("finished", false))
+		row["last"] = snap
+		best[key] = row
+
+
+func _probe_sprint_feel(manager: RaceManager, best: Dictionary = {}) -> void:
+	var rushing := 0
+	var sweating := 0
+	var voices := 0
+	var squawks := 0
+	for snail in manager.field:
+		var snap: Dictionary = best.get(snail.display_name, snail.run_feel_snapshot())
+		print(
+			"SMOKE: bird=", snail.display_name,
+			" gait=", snappedf(float(snap.get("gait", 0.0)), 0.01),
+			" pitch=", snappedf(float(snap.get("body_pitch", 0.0)), 0.01),
+			" yaw=", snappedf(float(snap.get("body_yaw", 0.0)), 0.01),
+			" head_p=", snappedf(float(snap.get("head_pitch", 0.0)), 0.01),
+			" head_z=", snappedf(float(snap.get("head_z", 0.0)), 0.01),
+			" legs=", snappedf(float(snap.get("leg_swing", 0.0)), 0.01),
+			" sweat=", snap.get("sweat"),
+			" voice=", snap.get("voice"),
+			" squawk=", snap.get("squawking"),
+			" halted=", snap.get("halted")
+		)
+		if bool(snap.get("halted", false)) or bool(snap.get("finished", false)):
+			continue
+		rushing += 1
+		if float(snap.get("gait", 0.0)) < 0.5:
+			push_error("SMOKE: %s gait is not a sprint (%.2f)" % [snail.display_name, float(snap.get("gait", 0.0))])
+		if float(snap.get("body_pitch", 9.0)) > -0.04:
+			push_error("SMOKE: %s is not leaned into the run (pitch %.2f)" % [snail.display_name, float(snap.get("body_pitch", 0.0))])
+		if float(snap.get("body_yaw", 0.0)) > 0.16:
+			push_error("SMOKE: %s model yaw is wobbling (%.2f)" % [snail.display_name, float(snap.get("body_yaw", 0.0))])
+		if float(snap.get("head_pitch", 0.0)) > 0.08:
+			push_error("SMOKE: %s head is pecking instead of looking forward (%.2f)" % [snail.display_name, float(snap.get("head_pitch", 0.0))])
+		if float(snap.get("head_z", 0.0)) > -0.15:
+			push_error("SMOKE: %s head is not stretched forward (z %.2f)" % [snail.display_name, float(snap.get("head_z", 0.0))])
+		if float(snap.get("leg_swing", 0.0)) < 0.18:
+			push_error("SMOKE: %s legs are not cycling (%.2f)" % [snail.display_name, float(snap.get("leg_swing", 0.0))])
+		if bool(snap.get("sweat", false)):
+			sweating += 1
+		else:
+			push_error("SMOKE: %s sweat VFX is off" % snail.display_name)
+		if bool(snap.get("voice", false)):
+			voices += 1
+		else:
+			push_error("SMOKE: %s missing squawk player" % snail.display_name)
+		if bool(snap.get("squawking", false)):
+			squawks += 1
+	print("SMOKE: sprint_rushing=", rushing, " sweating=", sweating, " voices=", voices, " squawks=", squawks)
+	if rushing < 2:
+		push_error("SMOKE: expected a rushing pack")
+	if sweating < rushing:
+		push_error("SMOKE: sweat missing on the pack")
+	if voices < rushing:
+		push_error("SMOKE: squawk players missing")
 
 
 func _run_sep_smoke() -> void:

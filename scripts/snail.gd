@@ -76,7 +76,15 @@ var _track_yaw: float = 0.0
 var _have_track_target: bool = false
 var _shown_vel: float = 0.0
 var _gait_move: float = 0.0
+var _head: Node3D
+var _wings: Node3D
+var _tail: Node3D
+var _sweat: CPUParticles3D
+var _voice: AudioStreamPlayer3D
+var _head_rest: Vector3 = Vector3.ZERO
+var _squawk_cd: float = 0.0
 var net_smooth: NetSmooth = NetSmooth.new()
+static var _squawk_bank: Array[AudioStreamWAV] = []
 
 
 func _ready() -> void:
@@ -168,10 +176,12 @@ func configure(data: Dictionary, number: int, lane_offset: float) -> void:
 	_crawl = Crawl.REST
 	_crawl_t = randf_range(0.0, 0.4)
 	_rest_dur = _rest_for(0.0)
+	_sweat = null
 	for child in _model.get_children():
 		child.queue_free()
 	GutterLooks.build_chicken(_model, shell_color, number, ChickenStock.is_rooster(data))
-	_legs = _model.get_node_or_null("Legs")
+	_bind_rig(true)
+	_ensure_run_fx()
 	_refresh_owned_nametag()
 	_refresh_mine_mark()
 	reset_pose()
@@ -238,10 +248,13 @@ func make_fried() -> void:
 	fried = true
 	racing = false
 	leave_yard()
+	_set_run_fx(false)
+	_sweat = null
 	shell_color = Color("c47828")
 	for child in _model.get_children():
 		child.queue_free()
 	GutterLooks.build_fried_chicken(_model)
+	_bind_rig(true)
 	if _label:
 		_label.text = "CRISPY"
 		_label.modulate = Color("e8a028")
@@ -262,7 +275,9 @@ func kick_off() -> void:
 	told_climb = false
 	told_cut = false
 	told_slip = false
+	_squawk_cd = 0.05 + float(snail_id) * 0.08
 	_begin_slide(0.0)
+	_set_run_fx(true)
 
 
 func reset_pose() -> void:
@@ -273,19 +288,21 @@ func reset_pose() -> void:
 	_model.scale = Vector3.ONE
 	_gait_move = 0.0
 	_shown_vel = 0.0
-	_legs = _model.get_node_or_null("Legs")
+	_bind_rig()
 	if _legs:
 		for child in _legs.get_children():
 			if child is Node3D:
 				(child as Node3D).rotation = Vector3.ZERO
-	var wings := _model.get_node_or_null("Wings")
-	if wings:
-		for child in wings.get_children():
+	if _wings:
+		for child in _wings.get_children():
 			if child is Node3D:
 				(child as Node3D).rotation = Vector3.ZERO
-	var head := _model.get_node_or_null("Head") as Node3D
-	if head:
-		head.rotation = Vector3.ZERO
+	if _head:
+		_head.rotation = Vector3.ZERO
+		_head.position = _head_rest if _head_rest != Vector3.ZERO else _head.position
+	if _tail:
+		_tail.rotation = Vector3.ZERO
+	_set_run_fx(false)
 
 
 func leave_track_follow() -> void:
@@ -341,8 +358,9 @@ func set_track_pose(origin: Vector3, yaw: float, snap: bool = false) -> void:
 func _follow_track(delta: float) -> void:
 	if not _have_track_target:
 		return
-	var follow := 1.0 - exp(-delta * 12.0)
-	var turn := 1.0 - exp(-delta * 10.0)
+	# Snappy follow so the pack reads as running the tangent, not sliding behind it.
+	var follow := 1.0 - exp(-delta * 16.0)
+	var turn := 1.0 - exp(-delta * 14.0)
 	global_position = global_position.lerp(_track_target, follow)
 	rotation.y = lerp_angle(rotation.y, _track_yaw, turn)
 	rotation.x = 0.0
@@ -503,6 +521,7 @@ func _process(delta: float) -> void:
 		return
 	if in_yard and visible and not racing and not fried:
 		leave_track_follow()
+		_set_run_fx(false)
 		_tick_yard(delta)
 		return
 	if _have_track_target and not (NetPlay.is_client() and not net_smooth.is_empty()):
@@ -510,6 +529,7 @@ func _process(delta: float) -> void:
 	if not racing:
 		_gait_move = move_toward(_gait_move, 0.0, delta * 5.0)
 		_shown_vel = move_toward(_shown_vel, 0.0, delta * 5.0)
+		_set_run_fx(false)
 		if Game.phase == Game.Phase.OPEN:
 			_paddock_act(delta)
 			_animate_legs(false)
@@ -523,11 +543,144 @@ func _process(delta: float) -> void:
 		_refresh_mine_mark()
 		return
 	if not (NetPlay.is_client() and not net_smooth.is_empty()):
-		_shown_vel = move_toward(_shown_vel, vel, delta * 4.5)
-	var want_move := 1.0 if _shown_vel > 0.16 else 0.0
-	if chaos_beat == ChaosBeat.PEBBLE or freeze_left > 0.0:
-		want_move = 0.0
-	_gait_move = move_toward(_gait_move, want_move, delta * 5.5)
+		_shown_vel = move_toward(_shown_vel, vel, delta * 8.0)
+	var halted := chaos_beat == ChaosBeat.PEBBLE or freeze_left > 0.0 or chaos_tag == "SPOOKED"
+	# Keep a sprint floor so REST beats still read as rushing, not a halt-and-peck.
+	var want_move := 0.0 if halted else maxf(0.78, clampf(_shown_vel / 1.35, 0.78, 1.0))
+	_gait_move = move_toward(_gait_move, want_move, delta * 7.0)
+	_pose_sprint(delta, halted)
+	_set_run_fx(not halted and _gait_move > 0.45)
+	_tick_squawk(delta, not halted and _gait_move > 0.45)
+	_refresh_chaos_nametag()
+	_refresh_mine_mark()
+
+
+func _bind_rig(capture_rest: bool = false) -> void:
+	if _model == null:
+		return
+	_legs = _model.get_node_or_null("Legs")
+	_head = _model.get_node_or_null("Head") as Node3D
+	_wings = _model.get_node_or_null("Wings")
+	_tail = _model.get_node_or_null("Tail") as Node3D
+	if _head and (capture_rest or _head_rest == Vector3.ZERO):
+		_head_rest = _head.position
+
+
+func _ensure_run_fx() -> void:
+	if _model == null:
+		return
+	if _sweat != null and is_instance_valid(_sweat):
+		_sweat.queue_free()
+	_sweat = CPUParticles3D.new()
+	_sweat.name = "Sweat"
+	_sweat.emitting = false
+	_sweat.amount = 22
+	_sweat.lifetime = 0.72
+	_sweat.explosiveness = 0.08
+	_sweat.randomness = 0.5
+	_sweat.local_coords = false
+	_sweat.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	_sweat.emission_sphere_radius = 0.09
+	_sweat.direction = Vector3(0.0, 1.2, 0.85)
+	_sweat.spread = 38.0
+	_sweat.gravity = Vector3(0.0, -5.4, 0.0)
+	_sweat.initial_velocity_min = 1.35
+	_sweat.initial_velocity_max = 2.7
+	_sweat.scale_amount_min = 0.85
+	_sweat.scale_amount_max = 1.55
+	var drop := QuadMesh.new()
+	drop.size = Vector2(0.14, 0.14)
+	_sweat.mesh = drop
+	var bead := StandardMaterial3D.new()
+	bead.albedo_color = Color(0.98, 0.94, 0.62, 0.92)
+	bead.emission_enabled = true
+	bead.emission = Color(1.0, 0.95, 0.55)
+	bead.emission_energy_multiplier = 3.2
+	bead.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	bead.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bead.cull_mode = BaseMaterial3D.CULL_DISABLED
+	bead.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	_sweat.material_override = bead
+	_sweat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sweat.position = Vector3(0.0, 0.40, -0.08)
+	_model.add_child(_sweat)
+	if _voice == null:
+		_voice = AudioStreamPlayer3D.new()
+		_voice.name = "Squawk"
+		_voice.bus = "Master"
+		_voice.unit_size = 5.4
+		_voice.max_distance = 28.0
+		_voice.volume_db = -6.5
+		_voice.attenuation_filter_cutoff_hz = 7000.0
+		add_child(_voice)
+
+
+func _set_run_fx(on: bool) -> void:
+	if _sweat and is_instance_valid(_sweat):
+		_sweat.emitting = on
+	if not on and _voice and _voice.playing:
+		_voice.stop()
+
+
+func _tick_squawk(delta: float, rushing: bool) -> void:
+	if _voice == null:
+		return
+	if not rushing:
+		return
+	_squawk_cd -= delta
+	if _squawk_cd > 0.0:
+		return
+	_squawk_cd = randf_range(0.42, 1.15)
+	if _squawk_bank.is_empty():
+		for i in 8:
+			_squawk_bank.append(_make_squawk(110 + i * 17))
+	_voice.stream = _squawk_bank[randi() % _squawk_bank.size()]
+	_voice.pitch_scale = randf_range(0.92, 1.12)
+	_voice.play()
+
+
+func _make_squawk(seed: int) -> AudioStreamWAV:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed if seed != 0 else 1
+	var rate := 22050
+	var dur := rng.randf_range(0.09, 0.17)
+	var nframes := int(rate * dur)
+	var samples := PackedFloat32Array()
+	samples.resize(nframes)
+	var f0 := rng.randf_range(680.0, 1080.0)
+	var f1 := f0 * rng.randf_range(1.38, 1.92)
+	for i in nframes:
+		var t := float(i) / float(rate)
+		var u := t / dur
+		var env := 1.0
+		if u < 0.07:
+			env = u / 0.07
+		elif u > 0.52:
+			env = maxf(1.0 - (u - 0.52) / 0.48, 0.0)
+		var freq := lerpf(f1, f0, u)
+		var vibr := 1.0 + 0.045 * sin(TAU * 36.0 * t)
+		var tone := sin(TAU * freq * vibr * t)
+		var harsh := sin(TAU * freq * 2.03 * t) * 0.3
+		var noise := (rng.randf() * 2.0 - 1.0) * 0.14 * (1.0 - u)
+		samples[i] = clampf((tone + harsh + noise) * env * 0.82, -1.0, 1.0)
+	return _pcm16(samples, rate)
+
+
+func _pcm16(samples: PackedFloat32Array, rate: int) -> AudioStreamWAV:
+	var data := PackedByteArray()
+	data.resize(samples.size() * 2)
+	for i in samples.size():
+		data.encode_s16(i * 2, int(clampf(samples[i], -1.0, 1.0) * 32767.0))
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.stereo = false
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_DISABLED
+	return stream
+
+
+func _pose_sprint(delta: float, halted: bool) -> void:
 	var move_w := _gait_move
 	var flatten := 1.0
 	if squish < 0.85:
@@ -539,29 +692,109 @@ func _process(delta: float) -> void:
 		_model.scale = Vector3(1.0 / maxf(flatten, 0.34), flatten, 1.15 / maxf(flatten, 0.5))
 	else:
 		_model.scale = Vector3.ONE
-	var want_yaw := sin(_wag * lerpf(1.6, 2.0, move_w)) * lerpf(0.045, 0.07, move_w)
-	var want_pitch := clampf(height * 0.45, 0.0, 0.14) + sin(_wag * 8.4) * 0.045 * move_w
-	var want_roll := clampf((0.5 - groove) * 0.14, -0.16, 0.16)
+	var cadence := lerpf(12.0, 27.0, move_w)
+	var gait := _wag * cadence
+	var ease := 1.0 - exp(-delta * 10.0)
+	# Node yaw already follows track tangent. Keep model yaw tiny so they don't wobble.
+	var want_yaw := sin(gait) * 0.025 * move_w
+	var want_pitch := -lerpf(0.12, 0.36, move_w) + clampf(height * 0.32, 0.0, 0.12)
+	var want_roll := clampf((0.5 - groove) * 0.09, -0.11, 0.11)
 	if chaos_tag == "GREASED":
 		want_roll = sin(_wag * 11.0) * 0.55
-	var ease := 1.0 - exp(-delta * 8.0)
+		want_yaw += sin(_wag * 9.0) * 0.18
+	if halted:
+		want_pitch = 0.06
+		want_yaw = 0.0
 	_model.rotation.y = lerpf(_model.rotation.y, want_yaw, ease)
 	_model.rotation.x = lerpf(_model.rotation.x, want_pitch, ease)
 	_model.rotation.z = lerpf(_model.rotation.z, want_roll, ease)
-	var bob := lerpf(0.008, 0.03, move_w) * (0.5 - 0.5 * cos(_wag * lerpf(2.3, 8.6, move_w)))
+	var bounce := 0.0
+	if not halted:
+		bounce = lerpf(0.014, 0.05, move_w) * absf(sin(gait))
 	if chaos_tag == "SPOOKED":
-		bob = 0.0
+		bounce = 0.0
 	_model.position.x = 0.0
 	_model.position.z = 0.0
-	_model.position.y = lerpf(_model.position.y, bob, 1.0 - exp(-delta * 14.0))
-	_animate_legs(move_w > 0.22)
-	_refresh_chaos_nametag()
-	_refresh_mine_mark()
+	_model.position.y = lerpf(_model.position.y, bounce, 1.0 - exp(-delta * 16.0))
+	_animate_sprint_rig(gait, move_w, halted)
+
+
+func _animate_sprint_rig(gait: float, move_w: float, halted: bool) -> void:
+	if _legs == null or _head == null:
+		_bind_rig()
+	if _legs:
+		var amp := 0.12 if halted else lerpf(0.32, 0.95, move_w)
+		for i in _legs.get_child_count():
+			var leg := _legs.get_child(i) as Node3D
+			if leg == null:
+				continue
+			leg.rotation.x = sin(gait + float(i) * PI) * amp
+	if _wings:
+		var flapping := height > 0.05
+		for i in _wings.get_child_count():
+			var wing := _wings.get_child(i) as Node3D
+			if wing == null:
+				continue
+			var side := -1.0 if i == 0 else 1.0
+			if flapping:
+				var flap := _wag * 14.5
+				wing.rotation = Vector3(0.12, 0.0, side * (0.22 + sin(flap) * 0.72))
+			elif halted:
+				wing.rotation = Vector3(0.06, 0.0, side * 0.14)
+			else:
+				var pump := sin(gait * 2.0) * 0.11 * move_w
+				wing.rotation = Vector3(0.48 + pump, side * 0.06, side * (0.24 + pump * 0.35))
+	if _head:
+		if chaos_tag == "PECKING" or freeze_left > 0.0:
+			_head.position = _head_rest
+			_head.rotation.x = 0.45 + absf(sin(_wag * 14.0)) * 0.85
+			_head.rotation.y = 0.0
+			_head.rotation.z = 0.0
+		elif halted:
+			_head.position = _head_rest
+			_head.rotation.x = 0.1
+			_head.rotation.y = 0.0
+			_head.rotation.z = 0.0
+		else:
+			_head.position = _head_rest + Vector3(0.0, -0.02 * move_w, -0.09 * move_w)
+			_head.rotation.x = -lerpf(0.08, 0.22, move_w) + sin(gait * 2.0) * 0.045 * move_w
+			_head.rotation.y = 0.0
+			_head.rotation.z = 0.0
+	if _tail:
+		if halted:
+			_tail.rotation = Vector3.ZERO
+		else:
+			_tail.rotation.x = lerpf(0.22, 0.58, move_w)
+			_tail.rotation.y = sin(gait * 2.0) * 0.14 * move_w
+			_tail.rotation.z = 0.0
+
+
+func run_feel_snapshot() -> Dictionary:
+	var head := _head
+	if head == null and _model:
+		head = _model.get_node_or_null("Head") as Node3D
+	var leg0: Node3D = null
+	if _legs and _legs.get_child_count() > 0:
+		leg0 = _legs.get_child(0) as Node3D
+	return {
+		"gait": _gait_move,
+		"body_pitch": _model.rotation.x if _model else 0.0,
+		"body_yaw": _model.rotation.y if _model else 0.0,
+		"head_pitch": head.rotation.x if head else 0.0,
+		"head_z": head.position.z if head else 0.0,
+		"leg_swing": absf(leg0.rotation.x) if leg0 else 0.0,
+		"sweat": _sweat != null and is_instance_valid(_sweat) and _sweat.emitting,
+		"voice": _voice != null,
+		"squawking": _voice != null and _voice.playing,
+		"racing": racing,
+		"finished": finished,
+		"halted": freeze_left > 0.0 or chaos_beat == ChaosBeat.PEBBLE or chaos_tag == "SPOOKED",
+	}
 
 
 func _animate_legs(moving: bool) -> void:
 	if _legs == null:
-		_legs = _model.get_node_or_null("Legs")
+		_bind_rig()
 	var w := _gait_move if racing else (1.0 if moving else 0.0)
 	if _legs:
 		var gait := _wag * lerpf(2.1, 9.2, w)
@@ -571,28 +804,31 @@ func _animate_legs(moving: bool) -> void:
 			if leg == null:
 				continue
 			leg.rotation.x = sin(gait + float(i) * PI) * amp
-	var wings := _model.get_node_or_null("Wings")
-	if wings:
+	if _wings == null and _model:
+		_wings = _model.get_node_or_null("Wings")
+	if _wings:
 		var flapping := w > 0.2 or height > 0.05
 		var flap := _wag * (10.5 if flapping else 2.6)
 		var wing_amp := 0.42 if flapping else 0.10
-		for i in wings.get_child_count():
-			var wing := wings.get_child(i) as Node3D
+		for i in _wings.get_child_count():
+			var wing := _wings.get_child(i) as Node3D
 			if wing == null:
 				continue
 			var side := -1.0 if i == 0 else 1.0
 			wing.rotation.z = side * (0.14 + sin(flap) * wing_amp)
-	var head := _model.get_node_or_null("Head") as Node3D
-	if head:
+	if _head == null and _model:
+		_head = _model.get_node_or_null("Head") as Node3D
+	if _head:
 		var peck := 0.0
 		if chaos_tag == "PECKING" or freeze_left > 0.0:
 			peck = 0.45 + absf(sin(_wag * 14.0)) * 0.85
 		elif w < 0.25:
 			peck = maxf(sin(_wag * 4.2), 0.0) * 0.42
-		head.rotation.x = peck
-	var tail := _model.get_node_or_null("Tail") as Node3D
-	if tail:
-		tail.rotation.y = sin(_wag * lerpf(1.5, 6.4, w)) * lerpf(0.07, 0.16, w)
+		_head.rotation.x = peck
+	if _tail == null and _model:
+		_tail = _model.get_node_or_null("Tail") as Node3D
+	if _tail:
+		_tail.rotation.y = sin(_wag * lerpf(1.5, 6.4, w)) * lerpf(0.07, 0.16, w)
 
 
 func _refresh_owned_nametag() -> void:
